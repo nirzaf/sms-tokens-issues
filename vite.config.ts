@@ -1,11 +1,10 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import fs from 'node:fs';
 import path from 'node:path';
 import { defineConfig } from 'vite';
 import { buildReportDataset } from './scripts/report-dataset.ts';
 
-const rawDataset = 'DATAVERSE_SMS_TEMPLATES_20261119.md';
+import { readCanonicalReportSource, REPORT_SOURCE_PATH } from './scripts/report-source.ts';
 const datasetDeclaration = /^const DATASET_PATH = ['"]\/assets\/aistudio\/DATAVERSE_SMS_TEMPLATES_20261119_615c15d2\.md['"];$/m;
 
 export default defineConfig(({ mode }) => {
@@ -24,9 +23,8 @@ export default defineConfig(({ mode }) => {
           if (!datasetDeclaration.test(code)) throw new Error('Could not locate the report dataset declaration.');
           let dataUrl = '';
           if (privateReport) {
-            const datasetPath = path.resolve(import.meta.dirname, rawDataset);
-            this.addWatchFile(datasetPath);
-            const dataset = buildReportDataset(fs.readFileSync(datasetPath, 'utf8'));
+            this.addWatchFile(REPORT_SOURCE_PATH);
+            const dataset = buildReportDataset(readCanonicalReportSource());
             dataUrl = `data:text/plain;charset=utf-8;base64,${Buffer.from(dataset).toString('base64')}`;
           }
           return code.replace(datasetDeclaration, () => `const DATASET_PATH = ${JSON.stringify(dataUrl)};`);

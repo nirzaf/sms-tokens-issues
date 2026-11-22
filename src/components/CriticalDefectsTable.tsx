@@ -8,6 +8,7 @@ interface CriticalDefectsTableProps {
 }
 
 const DEFECT_BADGE_STYLES: Record<CriticalDefectItem['defectType'], string> = {
+  'Missing placeholder': 'bg-amber-50 text-amber-900 border-amber-300',
   'Typo / Broken': 'bg-red-50 text-red-800 border-red-200',
   'Swapped / Misplaced': 'bg-rose-50 text-rose-800 border-rose-200',
   'Truncated / Missing': 'bg-amber-50 text-amber-900 border-amber-300',
@@ -26,10 +27,10 @@ export function CriticalDefectsTable({
         <div className="flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" aria-hidden="true" />
           <h2 className="font-display text-lg font-bold text-slate-950">
-            Top Critical Defects at a Glance
+            High-priority source findings
           </h2>
           <span className="text-xs font-medium text-slate-500 tabular-nums">
-            · {defects.length} critical findings in this snapshot; delivery impact not verified
+            · {defects.length} findings in this snapshot; priority is not delivery impact
           </span>
         </div>
         <p className="text-xs text-slate-500">
@@ -78,7 +79,7 @@ export function CriticalDefectsTable({
                   </td>
                   <td className="py-2.5 px-3 align-top">
                     <div className="text-xs text-slate-600 leading-relaxed max-w-md">
-                      {defect.impact}
+                      {defect.impact}{defect.evidenceConfidence && <span className="block mt-1">{defect.evidenceConfidence} · Runtime: {defect.runtimeStatus}</span>}{defect.interpretation && <span className="block mt-1">Review: {defect.interpretation}</span>}
                     </div>
                   </td>
                   <td className="py-2.5 px-4 align-top text-right whitespace-nowrap">

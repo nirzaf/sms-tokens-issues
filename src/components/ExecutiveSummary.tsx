@@ -76,7 +76,7 @@ export function ExecutiveSummary({
             }`}
           >
             <span className="tabular-nums">
-              {summary.inconsistentPairs}/{summary.totalPairSlots} pair slots with findings
+              {summary.populatedPairsWithFindings}/{summary.populatedPairs} populated pairs with findings
             </span>
             <ArrowRight className="w-3.5 h-3.5 opacity-60 group-hover:translate-x-0.5 transition-transform" aria-hidden="true" />
           </div>
@@ -190,7 +190,7 @@ export function ExecutiveSummary({
       </div>
 
       <p className="mt-4 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
-        Findings describe differences in the supplied snapshot, not failed SMS deliveries. Runtime replacement support, approved wording and fallback behavior were not verified.
+        {summary.totalPairSlots} possible slots: {summary.populatedPairs} populated pairs and {summary.missingPairs} absent from the snapshot. A populated pair counts once if a rule produces at least one observation. Findings describe the supplied snapshot, not failed SMS deliveries. Runtime replacement support, approved wording and fallback behavior were not verified.
         {' '}Critical priority: {summary.criticalDefectCount} findings across {summary.criticalPairCount} distinct pair slots and {summary.criticalMessageCount} existing messages.
       </p>
 

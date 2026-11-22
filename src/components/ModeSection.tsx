@@ -6,21 +6,14 @@ import type {
   TemplatePairAnalysis,
 } from '../types/sms';
 import { TemplatePairCard } from './TemplatePairCard';
-import { evidenceAnchor, type JumpToSource } from '../utils/sourceNavigation';
+import { evidenceAnchor, type JumpToSource, type PairSourceSelection } from '../utils/sourceNavigation';
 
 interface ModeSectionProps {
   mode: ModeAnalysis;
   visiblePairs: TemplatePairAnalysis[];
   isExpanded: boolean;
   flashedPairId: string | null;
-  pairSelections: Record<
-    string,
-    {
-      fieldId: SemanticFieldId | null;
-      token: string | null;
-      language: TemplateLanguage | null;
-    }
-  >;
+  pairSelections: Record<string, PairSourceSelection>;
   onToggleExpand: () => void;
   onSelectToken: (
     pairId: string,

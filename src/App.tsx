@@ -22,13 +22,13 @@ import {
   type PairFilterState,
 } from './utils/filterPairs';
 import { MODE_ORDER } from './utils/templateParser';
-import { resolveSourceAnchors, type JumpToSource } from './utils/sourceNavigation';
+import {
+  resolveSourceDestination,
+  type JumpToSource,
+  type PairSourceSelection,
+} from './utils/sourceNavigation';
 
-type PairSelections = Record<string, {
-  fieldId: SemanticFieldId | null;
-  token: string | null;
-  language: TemplateLanguage | null;
-}>;
+type PairSelections = Record<string, PairSourceSelection>;
 type MatrixSelection = { fieldId: SemanticFieldId; token: string } | null;
 type ViewSnapshot = {
   label: string;
@@ -261,31 +261,29 @@ export default function App() {
 
       setExpandedModes((prev) => ({ ...prev, [targetPair.mode]: true }));
 
-      // Highlight offending token / field inside the target card
-      if (token) {
-        let fieldId: SemanticFieldId | null = null;
-        try {
-          fieldId = getTokenField(token);
-        } catch {
-          fieldId = null;
+      const destination = resolveSourceDestination(targetPair, language, token, occurrenceIndex);
+      const resolvedLang: TemplateLanguage | null = language === 'Both' ? null : language;
+      // Do not highlight a non-occurrence or carry a stale selection into a source jump.
+      setPairSelections((prev) => {
+        const next = { ...prev };
+        delete next[pairId];
+        if (destination.kind === 'counterpart-missing' || destination.kind === 'occurrence-unavailable') {
+          next[pairId] = { fieldId: null, token: null, language: resolvedLang, sourceNotice: destination.kind };
+        } else if (token && (destination.kind === 'token' || (language === 'Both' && !targetPair.isMissingPair))) {
+          let fieldId: SemanticFieldId | null = null;
+          try {
+            fieldId = getTokenField(token);
+          } catch {
+            fieldId = null;
+          }
+          next[pairId] = {
+            fieldId, token, language: resolvedLang,
+            sourceSegmentIndex: destination.kind === 'token' ? destination.segmentIndex : undefined,
+          };
         }
-        const resolvedLang: TemplateLanguage | null =
-          language === 'Both' ? null : language;
-
-        setPairSelections((prev) => ({
-          ...prev,
-          [pairId]: {
-            fieldId,
-            token,
-            language: resolvedLang,
-          },
-        }));
-      }
-
-      setScrollRequest({
-        anchorIds: resolveSourceAnchors(targetPair, language, token, occurrenceIndex),
-        focus: true,
+        return next;
       });
+      setScrollRequest({ anchorIds: destination.anchorIds, focus: true });
       triggerFlash(pairId);
     },
     [report, filters, rememberView, triggerFlash]

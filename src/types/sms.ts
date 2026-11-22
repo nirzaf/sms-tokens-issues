@@ -41,7 +41,8 @@ export type IssueCategory =
   | 'casing_drift'
   | 'schema_drift'
   | 'content_difference'
-  | 'formatting';
+  | 'formatting'
+  | 'coverage';
 
 export type TokenVisualSeverity =
   | 'consistent'
@@ -53,6 +54,7 @@ export type TokenVisualSeverity =
 export type PairStatusBadge =
   | 'Source text differs'
   | 'Formatting difference'
+  | 'Absent from snapshot'
   | 'Consistent'
   | 'EN/AR Mismatch'
   | 'Casing Drift'
@@ -95,6 +97,7 @@ export interface PairFieldMappingRow {
 }
 
 export interface PairIssueDetail {
+  displayDefectType?: CriticalDefectItem['defectType'];
   relatedTokens?: string[];
   interpretation?: string;
   evidenceConfidence?: 'Observed in snapshot';
@@ -147,12 +150,15 @@ export interface CriticalDefectItem {
   mode: ConsultationModeCode;
   smsType: SmsType;
   language: TemplateLanguage | 'Both';
-  defectType: 'Typo / Broken' | 'Swapped / Misplaced' | 'Truncated / Missing' | 'Schema Drift' | 'Content difference' | 'Formatting';
+  defectType: 'Missing placeholder' | 'Typo / Broken' | 'Swapped / Misplaced' | 'Truncated / Missing' | 'Schema Drift' | 'Content difference' | 'Formatting';
   token: string | null;
   fieldId: SemanticFieldId | null;
   summary: string;
   impact: string;
   evidence?: PairIssueDetail['evidence'];
+  evidenceConfidence?: PairIssueDetail['evidenceConfidence'];
+  runtimeStatus?: PairIssueDetail['runtimeStatus'];
+  interpretation?: string;
 }
 
 export interface TokenMatrixOccurrence {
@@ -195,6 +201,7 @@ export interface AuditReportSummary {
   missingPairs: number;
   consistentPairs: number;
   inconsistentPairs: number;
+  populatedPairsWithFindings: number;
   uniqueTokenVariants: number;
   totalTokenOccurrences: number;
   countsByCategory: Record<IssueCategory, number>;

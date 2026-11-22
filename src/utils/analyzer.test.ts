@@ -1,15 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
+import { readCanonicalReportSource } from '../../scripts/report-source.ts';
 import { analyzeTemplatesMarkdown } from './analyzer';
 import { parseTemplatesMarkdown, tokenizeTemplateBody } from './templateParser';
 
-const MD_PATH = path.resolve(
-  process.cwd(),
-  'public/assets/aistudio/DATAVERSE_SMS_TEMPLATES_20261119_615c15d2.md'
-);
-const RAW_MARKDOWN = fs.readFileSync(MD_PATH, 'utf8');
+const RAW_MARKDOWN = readCanonicalReportSource();
 
 test('parses all 78 templates verbatim without metadata leakage', () => {
   const { templates, snapshotDate } = parseTemplatesMarkdown(RAW_MARKDOWN);
@@ -48,7 +43,10 @@ test('analyzes all 10 modes, 39 populated pairs, and 1 missing EP-Reminder pair'
   const epReminder = report.allPairs.find((p) => p.pairId === 'EP-Reminder');
   assert.ok(epReminder);
   assert.equal(epReminder.isMissingPair, true);
-  assert.ok(epReminder.statuses.includes('Truncated / Missing'));
+  assert.deepEqual(epReminder.statuses, ['Absent from snapshot']);
+  assert.equal(epReminder.issues[0].category, 'coverage');
+  assert.equal(epReminder.issues[0].severity, 'warning');
+  assert.equal(epReminder.hasCriticalDefect, false);
 });
 
 test('verifies exact counts and detection of critical defects from attached MD file', () => {
@@ -147,4 +145,34 @@ test('separates snapshot observations, source severity, and token spelling inven
   assert.equal(name.severity, 'consistent');
   assert.equal(name.count, 40);
   assert.ok(name.occurrences.every((occurrence) => typeof occurrence.occurrenceIndex === 'number'));
+});
+
+
+test('curated source observations and high-priority types have specific evidence', () => {
+  const report = analyzeTemplatesMarkdown(RAW_MARKDOWN);
+  const allIssues = report.allPairs.flatMap((pair) => pair.issues);
+  for (const [id, language] of [
+    ['RO-Cancellation-wording', 'Arabic'], ['EP-Cancellation-guardian', 'Both'],
+    ['EP-Cancellation-content-review', 'Both'], ['SC-Confirmation-unlabeled-tail', 'English'],
+    ['SC-Reschedule-unlabeled-tail', 'Both'],
+  ]) {
+    const matches = allIssues.filter((issue) => issue.id === id);
+    assert.equal(matches.length, 1, id);
+    assert.equal(matches[0].category, 'content_difference');
+    assert.equal(matches[0].language, language);
+    assert.ok(matches[0].evidence?.some((source) => id.startsWith(source.pairId)));
+    assert.equal(matches[0].runtimeStatus, 'Not verified');
+  }
+  for (const [id, presentation] of [
+    ['DR-Cancellation-missing-ar-patient_name', 'Missing placeholder'],
+    ['EP-Confirmation-swapped-datetime', 'Swapped / Misplaced'],
+    ['SC-Confirmation-truncated-ar', 'Truncated / Missing'],
+  ]) {
+    assert.equal(report.criticalDefects.find((finding) => finding.id === id)?.defectType, presentation, id);
+  }
+  assert.equal(report.summary.populatedPairsWithFindings,
+    report.allPairs.filter((pair) => !pair.isMissingPair && pair.issues.length > 0).length);
+  assert.equal(report.criticalDefects.some((finding) => finding.pairId === 'EP-Reminder'), false);
+  const findingsText = allIssues.map(({ title, explanation }) => `${title} ${explanation}`).join(' ');
+  assert.doesNotMatch(findingsText, /will fail replacement|proven broken|unsupported key|incomplete #PADATE#|absent from Dataverse/i);
 });

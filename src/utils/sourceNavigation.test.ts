@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { TemplatePairAnalysis } from '../types/sms';
 import { parseTemplatesMarkdown } from './templateParser';
-import { evidenceAnchor, resolveSourceAnchors } from './sourceNavigation';
+import {
+  evidenceAnchor, resolveSourceAnchors, resolveSourceDestination,
+} from './sourceNavigation';
 
 const markdown = [
   '# Snapshot', '', '## BL-Confirmation SMS-Arabic', '',
@@ -43,4 +45,17 @@ test('matrix return anchors distinguish repeated occurrences and bilingual evide
   const ar0 = evidenceAnchor('matrix', '#Token#', 'BL-Confirmation', 'Arabic', 0);
   assert.equal(new Set([en0, en1, ar0]).size, 3);
   assert.equal(en0, evidenceAnchor('matrix', '#Token#', 'BL-Confirmation', 'English', 0));
+});
+
+test('selection distinguishes exact occurrences, absent counterparts, and unavailable indices', () => {
+  const first = resolveSourceDestination(pair, 'Arabic', '#Token#', 0);
+  const second = resolveSourceDestination(pair, 'Arabic', '#Token#', 1);
+  assert.ok(first.kind === 'token' && second.kind === 'token');
+  assert.notEqual(first.segmentIndex, second.segmentIndex);
+  assert.deepEqual(resolveSourceDestination(pair, 'Arabic', '#Absent#'), {
+    kind: 'counterpart-missing',
+    anchorIds: ['source-BL-Confirmation-Arabic', 'pair-BL-Confirmation'],
+  });
+  assert.equal(resolveSourceDestination(pair, 'Arabic', '#Token#', 2).kind, 'occurrence-unavailable');
+  assert.equal(resolveSourceDestination(pair, 'English', '#Token#').kind, 'pair');
 });

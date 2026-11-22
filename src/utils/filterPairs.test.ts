@@ -1,15 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
 import { analyzeTemplatesMarkdown } from './analyzer';
 import { DEFAULT_FILTERS, hasAnyActiveFilter, pairMatchesFilters } from './filterPairs';
 
-const MD_PATH = path.resolve(
-  process.cwd(),
-  'public/assets/aistudio/DATAVERSE_SMS_TEMPLATES_20261119_615c15d2.md'
-);
-const RAW_MARKDOWN = fs.readFileSync(MD_PATH, 'utf8');
+import { readCanonicalReportSource } from '../../scripts/report-source.ts';
+
+const RAW_MARKDOWN = readCanonicalReportSource();
 
 test('filterPairs filters by mode, smsType, category, exactToken, search, and inconsistent-only accurately', () => {
   const report = analyzeTemplatesMarkdown(RAW_MARKDOWN);

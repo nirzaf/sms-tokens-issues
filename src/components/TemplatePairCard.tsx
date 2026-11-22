@@ -16,16 +16,12 @@ import type {
 } from '../types/sms';
 import { FIELD_MAP } from '../utils/analyzer';
 import { VerbatimTemplateBody } from './VerbatimTemplateBody';
-import { evidenceAnchor, type JumpToSource } from '../utils/sourceNavigation';
+import { evidenceAnchor, type JumpToSource, type PairSourceSelection } from '../utils/sourceNavigation';
 
 interface TemplatePairCardProps {
   pair: TemplatePairAnalysis;
   isFlashed: boolean;
-  externalSelection: {
-    fieldId: SemanticFieldId | null;
-    token: string | null;
-    language: TemplateLanguage | null;
-  } | null;
+  externalSelection: PairSourceSelection | null;
   onSelectToken: (
     pairId: string,
     token: string,
@@ -41,12 +37,13 @@ interface TemplatePairCardProps {
 const STATUS_STYLES: Record<PairStatusBadge, string> = {
   'Source text differs': 'bg-orange-50 text-orange-800 border-orange-200',
   'Formatting difference': 'bg-slate-100 text-slate-800 border-slate-200',
-  Consistent: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  Consistent: 'bg-slate-50 text-slate-700 border-slate-200',
   'EN/AR Mismatch': 'bg-orange-50 text-orange-800 border-orange-200',
   'Casing Drift': 'bg-blue-50 text-blue-800 border-blue-200',
   'Schema Drift': 'bg-violet-50 text-violet-800 border-violet-200',
   'Typo / Broken': 'bg-red-50 text-red-800 border-red-200',
   'Swapped / Misplaced': 'bg-rose-50 text-rose-800 border-rose-200',
+  'Absent from snapshot': 'bg-amber-50 text-amber-900 border-amber-300',
   'Truncated / Missing': 'bg-amber-50 text-amber-900 border-amber-300',
 };
 
@@ -135,7 +132,7 @@ export function TemplatePairCard({
               key={st}
               className={`px-2 py-0.5 text-[11px] font-semibold rounded border whitespace-nowrap ${STATUS_STYLES[st]}`}
             >
-              {st}
+              {st === 'Consistent' ? 'No automated findings' : st}
             </span>
           ))}
         </div>
@@ -179,16 +176,29 @@ export function TemplatePairCard({
                 <span className="text-xs font-semibold text-slate-700">
                   English
                 </span>
-                <span className="text-[11px] text-slate-400">
+                <span className="text-[11px] text-slate-600 text-right">
                   Verbatim · LTR
+                  {pair.en?.sourceLine !== undefined && (
+                    <span className="ml-2" title={pair.en.heading}>
+                      Source heading: line {pair.en.sourceLine}
+                    </span>
+                  )}
                 </span>
               </div>
               {pair.en ? (
                 <>
+                  {selectedLanguage === 'English' && externalSelection?.sourceNotice && (
+                    <p role="status" className="mb-2 text-xs font-medium text-amber-900">
+                      {externalSelection.sourceNotice === 'counterpart-missing'
+                        ? 'Counterpart missing from this language in the supplied snapshot.'
+                        : 'The requested occurrence is not available in this source message.'}
+                    </p>
+                  )}
                   <VerbatimTemplateBody
                   body={pair.en.body}
                   sourceTemplateKey={pair.en.key}
                   language="English"
+                  sourceSegmentIndex={externalSelection?.sourceSegmentIndex}
                   tokenMap={pair.enTokenMap}
                   selectedFieldId={selectedFieldId}
                   selectedToken={selectedToken}
@@ -216,16 +226,29 @@ export function TemplatePairCard({
                 <span className="text-xs font-semibold text-slate-700">
                   Arabic
                 </span>
-                <span className="text-[11px] text-slate-400">
+                <span className="text-[11px] text-slate-600 text-right">
                   Verbatim · RTL
+                  {pair.ar?.sourceLine !== undefined && (
+                    <span className="ml-2" title={pair.ar.heading}>
+                      Source heading: line {pair.ar.sourceLine}
+                    </span>
+                  )}
                 </span>
               </div>
               {pair.ar ? (
                 <>
+                  {selectedLanguage === 'Arabic' && externalSelection?.sourceNotice && (
+                    <p role="status" className="mb-2 text-xs font-medium text-amber-900">
+                      {externalSelection.sourceNotice === 'counterpart-missing'
+                        ? 'Counterpart missing from this language in the supplied snapshot.'
+                        : 'The requested occurrence is not available in this source message.'}
+                    </p>
+                  )}
                   <VerbatimTemplateBody
                   body={pair.ar.body}
                   sourceTemplateKey={pair.ar.key}
                   language="Arabic"
+                  sourceSegmentIndex={externalSelection?.sourceSegmentIndex}
                   tokenMap={pair.arTokenMap}
                   selectedFieldId={selectedFieldId}
                   selectedToken={selectedToken}

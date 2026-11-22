@@ -270,13 +270,13 @@ function isTypoToken(token: string): { isTypo: boolean; reason: string } {
     const corrected = token.replace(/NMAE/i, 'NAME');
     return {
       isTypo: true,
-      reason: `Misspelled token ${token} contains "NMAE"; ${corrected} is a candidate spelling. Replacement support is unverified.`,
+      reason: `Likely spelling anomaly: ${token} contains "NMAE"; ${corrected} is a candidate spelling. Replacement support is unverified.`,
     };
   }
   if (/^#[A-Z]+[a-z][A-Z]+#$/.test(token)) {
     return {
       isTypo: true,
-      reason: `Malformed mixed-case typo ${token} (lowercase "i" inside all-caps token) differs in casing from ${token.toUpperCase()}.`,
+      reason: `Unusual mixed-case spelling ${token} relative to other BST facility variants; replacement support is unverified.`,
     };
   }
   return { isTypo: false, reason: '' };
@@ -414,7 +414,7 @@ function detectModeSchemaDriftNotes(
       'EP-Cancellation abandons the #P*#/#PA*# schema used in Confirmation and Reschedule, switching to #NAME#/#HCName#/#ClinicName# (EN) and inconsistent prefix/suffix Arabic tokens (#NameA#, #AHCName#, #AClinicname#, #ATime#, #DayA#, #DateA#).'
     );
     notes.push(
-      'EP-Reminder is completely absent from Dataverse in both English and Arabic.'
+      'No EP Reminder English/Arabic records appear in the supplied snapshot; required coverage or availability elsewhere is unverified.'
     );
   }
 
@@ -497,6 +497,36 @@ function findTokenProseJoins(body: string): string[] {
   return matches;
 }
 
+type ContentObservation = { pairId: string; suffix: string; language: TemplateLanguage | 'Both'; title: string; observation: string; interpretation: string; confirm: (en: string, ar: string) => boolean };
+
+const UNLABELED_TAIL = '#PMAP# #PEXTRAMSG# #PPHONE#';
+const ADDITIONAL_CONTENT_REVIEW: ContentObservation[] = [
+  {
+    pairId: 'RO-Cancellation', suffix: 'wording', language: 'Arabic', title: 'Cancellation wording and clinic context differ',
+    observation: 'The Arabic cancellation opens with ارجو التذكر, repeats سيدي / سيدتي and appends الاسرة after #PAPPTTYPE#, unlike the English message.',
+    interpretation: 'Confirm approved cancellation wording and the intended clinic description with the bilingual operations team.',
+    confirm: (_en, ar) => /ارجو التذكر/u.test(ar) && /#PAPPTTYPE#\s*الاسرة/u.test(ar),
+  },
+  {
+    pairId: 'EP-Cancellation', suffix: 'guardian', language: 'Both', title: 'Guardian instruction remains in cancellation',
+    observation: 'Both cancellation templates still include an instruction about guardian accompaniment.',
+    interpretation: 'Confirm whether this instruction is intended to accompany a cancellation, separately from the contact route.',
+    confirm: (en, ar) => /guardian|accompan/i.test(en) && /الأمر|الامر|مرافق|مصاحب/u.test(ar),
+  },
+  {
+    pairId: 'SC-Confirmation', suffix: 'unlabeled-tail', language: 'English', title: 'English confirmation ends with unlabeled placeholders',
+    observation: 'English ends with #PMAP# #PEXTRAMSG# #PPHONE# without prose labels in the snapshot.',
+    interpretation: 'Check how these values should be introduced and separated. Runtime values and the rendered wording were not verified.',
+    confirm: (en) => en.trimEnd().endsWith(UNLABELED_TAIL),
+  },
+  {
+    pairId: 'SC-Reschedule', suffix: 'unlabeled-tail', language: 'Both', title: 'Both reschedule messages contain an unlabeled tail',
+    observation: 'Both reschedule messages append #PMAP# #PEXTRAMSG# #PPHONE# without prose explaining these values.',
+    interpretation: 'Confirm approved labels and placement, separately for each language. Rendered values were not verified.',
+    confirm: (en, ar) => en.includes(UNLABELED_TAIL) && ar.includes(UNLABELED_TAIL),
+  },
+];
+
 function curatedSourceIssues(pairId: string, en: ParsedTemplate | null, ar: ParsedTemplate | null): PairIssueDetail[] {
   const findings: PairIssueDetail[] = [];
   const review = CONTENT_REVIEW[pairId];
@@ -506,6 +536,14 @@ function curatedSourceIssues(pairId: string, en: ParsedTemplate | null, ar: Pars
     interpretation: review.interpretation,
     evidence: [pairId, ...review.compare].map((id) => ({ pairId: id, language: 'Both' as const })),
   });
+  for (const item of ADDITIONAL_CONTENT_REVIEW) {
+    if (item.pairId !== pairId || !en || !ar || !item.confirm(en.body, ar.body)) continue;
+    findings.push({
+      id: `${pairId}-${item.suffix}`, category: 'content_difference', severity: 'warning',
+      language: item.language, title: item.title, explanation: item.observation, interpretation: item.interpretation,
+      evidence: [{ pairId, language: item.language }],
+    });
+  }
   for (const template of [en, ar]) {
     if (!template) continue;
     const actual = findTokenProseJoins(template.body);
@@ -536,10 +574,10 @@ function buildPairAnalysis(
   if (!en && !ar) {
     const missingIssue: PairIssueDetail = {
       id: `${pairId}-missing-pair`,
-      category: 'swapped_missing',
-      severity: 'critical',
+      category: 'coverage',
+      severity: 'warning',
       language: 'Both',
-      title: `Missing ${pairId} templates (EN & AR)`,
+      title: `${pairId}: absent from snapshot (EN & AR)`,
       explanation: `No English or Arabic template for ${pairId} appears in the supplied snapshot. Required coverage, fallback, and delivery are not verified.`,
     };
     return {
@@ -549,10 +587,10 @@ function buildPairAnalysis(
       en: null,
       ar: null,
       isMissingPair: true,
-      statuses: ['Truncated / Missing'],
-      categories: ['swapped_missing'],
+      statuses: ['Absent from snapshot'],
+      categories: ['coverage'],
       isConsistent: false,
-      hasCriticalDefect: true,
+      hasCriticalDefect: false,
       fieldRows: [],
       issues: [withEvidence(missingIssue, pairId)],
       tokenSetsMatch: false,
@@ -660,6 +698,7 @@ function buildPairAnalysis(
     statusesSet.add('Swapped / Misplaced');
     issues.push({
       id: `${pairId}-swapped-datetime`,
+      displayDefectType: 'Swapped / Misplaced',
       category: 'swapped_missing',
       severity: 'critical',
       language: 'Arabic',
@@ -676,6 +715,7 @@ function buildPairAnalysis(
     statusesSet.add('Swapped / Misplaced');
     issues.push({
       id: `${pairId}-misplaced-pmsga`,
+      displayDefectType: 'Swapped / Misplaced',
       category: 'swapped_missing',
       severity: 'critical',
       language: 'Arabic',
@@ -691,6 +731,7 @@ function buildPairAnalysis(
     statusesSet.add('Truncated / Missing');
     issues.push({
       id: `${pairId}-truncated-ar`,
+      displayDefectType: 'Truncated / Missing',
       category: 'swapped_missing',
       severity: 'critical',
       language: 'Arabic',
@@ -789,6 +830,7 @@ function buildPairAnalysis(
       if (arTrunc.severity !== 'severe') {
         issues.push({
           id: `${pairId}-missing-ar-${fieldId}`,
+          displayDefectType: 'Missing placeholder',
           category: 'swapped_missing',
           severity: 'critical',
           language: 'Arabic',
@@ -811,6 +853,7 @@ function buildPairAnalysis(
       arNotes.push(msg);
       issues.push({
         id: `${pairId}-missing-en-${fieldId}`,
+        displayDefectType: 'Missing placeholder',
         category: 'swapped_missing',
         severity: 'critical',
         language: 'English',
@@ -883,7 +926,7 @@ function buildPairAnalysis(
           language: 'English',
           token: enTok,
           fieldId,
-          title: `Malformed/misspelled English token ${enTok}`,
+          title: `Unusual source token spelling ${enTok}`,
           explanation: enTypo.reason,
         });
       }
@@ -898,7 +941,7 @@ function buildPairAnalysis(
         arCats.add('typo_malformed');
         categoriesSet.add('typo_malformed');
         statusesSet.add('Typo / Broken');
-        statusLabel = arTok === '#PA#' ? 'Truncated Token' : 'Typo / Broken';
+        statusLabel = arTok === '#PA#' ? 'Suspected date placeholder' : 'Source spelling needs review';
         explanations.unshift(arTypo.reason);
         arNotes.unshift(arTypo.reason);
         issues.push({
@@ -910,8 +953,8 @@ function buildPairAnalysis(
           fieldId,
           title:
             arTok === '#PA#'
-              ? 'Truncated Arabic token #PA# (incomplete #PADATE#)'
-              : `Malformed/misspelled Arabic token ${arTok}`,
+              ? 'Suspected date placeholder #PA#; context suggests #PADATE# (replacement support unverified)'
+              : `Unusual source token spelling ${arTok}`,
           explanation: arTypo.reason,
         });
       }
@@ -1129,6 +1172,7 @@ const BADGE_ORDER: PairStatusBadge[] = [
   'Schema Drift',
   'Source text differs',
   'Formatting difference',
+  'Absent from snapshot',
   'Consistent',
 ];
 
@@ -1146,12 +1190,13 @@ function buildCriticalDefects(allPairs: TemplatePairAnalysis[]): CriticalDefectI
   return allPairs.flatMap((pair) => pair.issues.filter((issue) => issue.severity === 'critical').map((issue) => ({
     id: issue.id,
     pairId: pair.pairId, mode: pair.mode, smsType: pair.smsType, language: issue.language,
-    defectType: issue.category === 'content_difference' ? 'Content difference' as const :
+    defectType: issue.displayDefectType ?? (issue.category === 'content_difference' ? 'Content difference' as const :
       issue.category === 'formatting' ? 'Formatting' as const :
-      issue.category === 'swapped_missing' ? (issue.token ? 'Swapped / Misplaced' as const : 'Truncated / Missing' as const) :
-      issue.category === 'schema_drift' ? 'Schema Drift' as const : 'Typo / Broken' as const,
+      issue.category === 'swapped_missing' ? 'Truncated / Missing' as const :
+      issue.category === 'schema_drift' ? 'Schema Drift' as const : 'Typo / Broken' as const),
     token: issue.token ?? null, fieldId: issue.fieldId ?? null,
     summary: issue.title, impact: issue.explanation, evidence: issue.evidence,
+    evidenceConfidence: issue.evidenceConfidence, runtimeStatus: issue.runtimeStatus, interpretation: issue.interpretation,
   })));
 }
 
@@ -1319,6 +1364,7 @@ export function analyzeTemplatesMarkdown(markdown: string): FullAuditReport {
     schema_drift: 0,
     content_difference: 0,
     formatting: 0,
+    coverage: 0,
   };
 
   const pairsByCategory: Record<IssueCategory, number> = {
@@ -1329,6 +1375,7 @@ export function analyzeTemplatesMarkdown(markdown: string): FullAuditReport {
     schema_drift: 0,
     content_difference: 0,
     formatting: 0,
+    coverage: 0,
   };
 
   for (const pair of allPairs) {
@@ -1357,6 +1404,7 @@ export function analyzeTemplatesMarkdown(markdown: string): FullAuditReport {
     missingPairs: allPairs.filter((p) => p.isMissingPair).length,
     consistentPairs: allPairs.filter((p) => p.isConsistent).length,
     inconsistentPairs: allPairs.filter((p) => !p.isConsistent).length,
+    populatedPairsWithFindings: allPairs.filter((pair) => !pair.isMissingPair && pair.issues.length > 0).length,
     uniqueTokenVariants,
     totalTokenOccurrences,
     countsByCategory,

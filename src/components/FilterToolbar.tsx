@@ -37,6 +37,7 @@ const CATEGORY_OPTIONS: Array<{ value: IssueCategory | 'ALL'; label: string }> =
   { value: 'schema_drift', label: 'Within-Mode Schema Drift' },
   { value: 'content_difference', label: 'Message Content Differences' },
   { value: 'formatting', label: 'Source Formatting and Adjacent Text' },
+  { value: 'coverage', label: 'Absent from Supplied Snapshot' },
 ];
 
 export function FilterToolbar({

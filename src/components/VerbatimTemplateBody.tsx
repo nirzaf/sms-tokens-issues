@@ -16,6 +16,7 @@ interface VerbatimTemplateBodyProps {
   selectedFieldId: SemanticFieldId | null;
   selectedToken: string | null;
   selectedLanguage: TemplateLanguage | null;
+  sourceSegmentIndex?: number;
   onTokenClick: (token: string, fieldId: SemanticFieldId, language: TemplateLanguage) => void;
 }
 
@@ -35,6 +36,7 @@ export function VerbatimTemplateBody({
   selectedFieldId,
   selectedToken,
   selectedLanguage,
+  sourceSegmentIndex,
   onTokenClick,
 }: VerbatimTemplateBodyProps) {
   const segments = useMemo(() => tokenizeTemplateBody(body), [body]);
@@ -61,12 +63,14 @@ export function VerbatimTemplateBody({
 
         const isDirectSelected =
           selectedToken === seg.value &&
-          (selectedLanguage === null || selectedLanguage === language);
+          (selectedLanguage === null || selectedLanguage === language) &&
+          (sourceSegmentIndex === undefined || seg.index === sourceSegmentIndex);
 
         const isCounterpartSelected =
           !isDirectSelected &&
           selectedFieldId !== null &&
-          fieldId === selectedFieldId;
+          fieldId === selectedFieldId &&
+          (sourceSegmentIndex === undefined || selectedLanguage !== language);
 
         const severityClass = SEVERITY_CLASS[severity];
         const activeClass = isDirectSelected
@@ -80,6 +84,7 @@ export function VerbatimTemplateBody({
             key={seg.index}
             id={sourceTemplateKey ? sourceTokenAnchor(sourceTemplateKey, seg.index) : undefined}
             type="button"
+            aria-pressed={isDirectSelected}
             dir="ltr"
             onClick={() => {
               if (fieldId) {
