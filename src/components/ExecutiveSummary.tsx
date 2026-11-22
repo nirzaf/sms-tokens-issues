@@ -76,7 +76,7 @@ export function ExecutiveSummary({
             }`}
           >
             <span className="tabular-nums">
-              {summary.inconsistentPairs}/{summary.totalPairSlots} pairs flagged
+              {summary.inconsistentPairs}/{summary.totalPairSlots} pair slots with findings
             </span>
             <ArrowRight className="w-3.5 h-3.5 opacity-60 group-hover:translate-x-0.5 transition-transform" aria-hidden="true" />
           </div>
@@ -189,6 +189,11 @@ export function ExecutiveSummary({
         </button>
       </div>
 
+      <p className="mt-4 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
+        Findings describe differences in the supplied snapshot, not failed SMS deliveries. Runtime replacement support, approved wording and fallback behavior were not verified.
+        {' '}Critical priority: {summary.criticalDefectCount} findings across {summary.criticalPairCount} distinct pair slots and {summary.criticalMessageCount} existing messages.
+      </p>
+
       {/* Visual Legend for Yellow Token Highlighting + Layered Severity Cues */}
       <div
         aria-label="Token highlight legend"
@@ -198,17 +203,17 @@ export function ExecutiveSummary({
 
         <span className="inline-flex items-center gap-2">
           <mark className="sms-token pointer-events-none">#PMAP#</mark>
-          <span>Consistent token</span>
+          <span>No highlighted finding on this occurrence</span>
         </span>
 
         <span className="inline-flex items-center gap-2">
           <mark className="sms-token sms-token--critical pointer-events-none">#PA#</mark>
-          <span>Typo, broken, swapped, or misplaced</span>
+          <span>High-priority source finding at this occurrence</span>
         </span>
 
         <span className="inline-flex items-center gap-2">
           <mark className="sms-token sms-token--mismatch pointer-events-none">#PFacility#</mark>
-          <span>EN/AR token name mismatch</span>
+          <span>EN/AR mapping difference, localized values may be intentional</span>
         </span>
 
         <span className="inline-flex items-center gap-2">

@@ -121,7 +121,7 @@ export function StickyNav({
                   key={m.code}
                   type="button"
                   onClick={() => onJumpToMode(m.code)}
-                  title={`${m.code} — ${m.name} (${m.templateCount} templates, ${m.inconsistentPairCount} inconsistent pairs)`}
+                  title={`${m.code} (${m.templateCount} templates, ${m.inconsistentPairCount} inconsistent pairs)`}
                   className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer border ${
                     isSelected
                       ? 'bg-slate-900 text-white border-slate-900'

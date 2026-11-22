@@ -6,6 +6,7 @@ import type {
   TemplatePairAnalysis,
 } from '../types/sms';
 import { TemplatePairCard } from './TemplatePairCard';
+import { evidenceAnchor, type JumpToSource } from '../utils/sourceNavigation';
 
 interface ModeSectionProps {
   mode: ModeAnalysis;
@@ -29,7 +30,8 @@ interface ModeSectionProps {
   ) => void;
   onClearSelection: (pairId: string) => void;
   onFilterByExactToken: (token: string) => void;
-  onJumpToTokenMatrix: (fieldId: SemanticFieldId, token: string) => void;
+  onJumpToTokenMatrix: (fieldId: SemanticFieldId, token: string, originId?: string) => void;
+  onJumpToSource: JumpToSource;
 }
 
 export function ModeSection({
@@ -43,6 +45,7 @@ export function ModeSection({
   onClearSelection,
   onFilterByExactToken,
   onJumpToTokenMatrix,
+  onJumpToSource,
 }: ModeSectionProps) {
   if (visiblePairs.length === 0) return null;
 
@@ -71,7 +74,10 @@ export function ModeSection({
             <h3 className="font-display text-base font-bold text-slate-950 leading-snug">
               {mode.name}
             </h3>
-            <p className="text-xs text-slate-500 truncate">{mode.description}</p>
+            <p className="text-xs text-slate-500">{mode.description}</p>
+            <p className="text-[11px] text-slate-500">
+              Description inferred from the snapshot, not an official Dataverse choice label.
+            </p>
           </div>
         </div>
 
@@ -114,6 +120,18 @@ export function ModeSection({
                   </li>
                 ))}
               </ul>
+              <div className="flex flex-wrap gap-2" aria-label={`${mode.code} evidence by SMS type`}>
+                {mode.pairs.map((pair) => {
+                  const anchor = evidenceAnchor('mode-note-source', pair.pairId);
+                  return (
+                    <button type="button" key={pair.pairId} id={anchor}
+                      onClick={() => onJumpToSource(pair.pairId, null, 'Both', 'Mode notes', anchor)}
+                      className="underline underline-offset-2">
+                      Inspect {pair.smsType} {pair.isMissingPair ? 'slot' : 'sources'}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -129,6 +147,7 @@ export function ModeSection({
                 onClearSelection={onClearSelection}
                 onFilterByExactToken={onFilterByExactToken}
                 onJumpToTokenMatrix={onJumpToTokenMatrix}
+                onJumpToSource={onJumpToSource}
               />
             ))}
           </div>

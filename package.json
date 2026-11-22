@@ -4,11 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port=3000 --host=0.0.0.0",
+    "dev": "vite --port=3000 --host=127.0.0.1",
     "build": "vite build",
-    "preview": "vite preview",
+    "preview": "vite preview --host=127.0.0.1",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "node --import ./scripts/register-ts.mjs --test src/utils/*.test.ts scripts/*.test.ts",
+    "export:offline": "node scripts/export-offline.mjs",
+    "dev:private": "vite --mode private-report --port=3000 --host=127.0.0.1",
+    "build:private": "vite build --mode private-report"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -27,10 +31,13 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.4.21",
-    "esbuild": "^0.25.0",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
     "typescript": "^7.0.2",
     "@types/express": "^4.17.21"
+  },
+  "packageManager": "npm@11.19.1",
+  "engines": {
+    "node": ">=24.0.0"
   }
 }

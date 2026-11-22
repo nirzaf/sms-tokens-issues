@@ -39,7 +39,9 @@ export type IssueCategory =
   | 'swapped_missing'
   | 'en_ar_mismatch'
   | 'casing_drift'
-  | 'schema_drift';
+  | 'schema_drift'
+  | 'content_difference'
+  | 'formatting';
 
 export type TokenVisualSeverity =
   | 'consistent'
@@ -49,6 +51,8 @@ export type TokenVisualSeverity =
   | 'critical';
 
 export type PairStatusBadge =
+  | 'Source text differs'
+  | 'Formatting difference'
   | 'Consistent'
   | 'EN/AR Mismatch'
   | 'Casing Drift'
@@ -64,6 +68,7 @@ export interface ParsedTemplate {
   smsType: SmsType;
   language: TemplateLanguage;
   heading: string;
+  sourceLine?: number; // One-based Markdown heading location; not record metadata.
   body: string; // Verbatim template string from source file
   tokens: string[]; // Ordered list of exact #TOKEN# strings found in body
 }
@@ -90,6 +95,11 @@ export interface PairFieldMappingRow {
 }
 
 export interface PairIssueDetail {
+  relatedTokens?: string[];
+  interpretation?: string;
+  evidenceConfidence?: 'Observed in snapshot';
+  runtimeStatus?: 'Not verified';
+  evidence?: { pairId: string; language: TemplateLanguage | 'Both' }[];
   id: string;
   category: IssueCategory;
   severity: 'critical' | 'warning' | 'info';
@@ -110,6 +120,7 @@ export interface TemplatePairAnalysis {
   statuses: PairStatusBadge[];
   categories: IssueCategory[];
   isConsistent: boolean;
+  tokenSetsMatch?: boolean;
   hasCriticalDefect: boolean;
   fieldRows: PairFieldMappingRow[];
   issues: PairIssueDetail[];
@@ -136,14 +147,18 @@ export interface CriticalDefectItem {
   mode: ConsultationModeCode;
   smsType: SmsType;
   language: TemplateLanguage | 'Both';
-  defectType: 'Typo / Broken' | 'Swapped / Misplaced' | 'Truncated / Missing' | 'Schema Drift';
+  defectType: 'Typo / Broken' | 'Swapped / Misplaced' | 'Truncated / Missing' | 'Schema Drift' | 'Content difference' | 'Formatting';
   token: string | null;
   fieldId: SemanticFieldId | null;
   summary: string;
   impact: string;
+  evidence?: PairIssueDetail['evidence'];
 }
 
 export interface TokenMatrixOccurrence {
+  occurrenceIndex?: number;
+  severity?: TokenVisualSeverity;
+  issueIds?: string[];
   pairId: string;
   mode: ConsultationModeCode;
   smsType: SmsType;
@@ -185,6 +200,8 @@ export interface AuditReportSummary {
   countsByCategory: Record<IssueCategory, number>;
   pairsByCategory: Record<IssueCategory, number>;
   criticalDefectCount: number;
+  criticalPairCount: number;
+  criticalMessageCount: number;
 }
 
 export interface FullAuditReport {

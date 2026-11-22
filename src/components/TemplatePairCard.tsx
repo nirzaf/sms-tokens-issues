@@ -16,6 +16,7 @@ import type {
 } from '../types/sms';
 import { FIELD_MAP } from '../utils/analyzer';
 import { VerbatimTemplateBody } from './VerbatimTemplateBody';
+import { evidenceAnchor, type JumpToSource } from '../utils/sourceNavigation';
 
 interface TemplatePairCardProps {
   pair: TemplatePairAnalysis;
@@ -33,10 +34,13 @@ interface TemplatePairCardProps {
   ) => void;
   onClearSelection: (pairId: string) => void;
   onFilterByExactToken: (token: string) => void;
-  onJumpToTokenMatrix: (fieldId: SemanticFieldId, token: string) => void;
+  onJumpToTokenMatrix: (fieldId: SemanticFieldId, token: string, originId?: string) => void;
+  onJumpToSource: JumpToSource;
 }
 
 const STATUS_STYLES: Record<PairStatusBadge, string> = {
+  'Source text differs': 'bg-orange-50 text-orange-800 border-orange-200',
+  'Formatting difference': 'bg-slate-100 text-slate-800 border-slate-200',
   Consistent: 'bg-emerald-50 text-emerald-800 border-emerald-200',
   'EN/AR Mismatch': 'bg-orange-50 text-orange-800 border-orange-200',
   'Casing Drift': 'bg-blue-50 text-blue-800 border-blue-200',
@@ -70,6 +74,7 @@ export function TemplatePairCard({
   onClearSelection,
   onFilterByExactToken,
   onJumpToTokenMatrix,
+  onJumpToSource,
 }: TemplatePairCardProps) {
   const [tableOpen, setTableOpen] = useState(true);
 
@@ -92,12 +97,15 @@ export function TemplatePairCard({
     (issue) =>
       issue.category === 'swapped_missing' ||
       issue.category === 'typo_malformed' ||
-      issue.category === 'schema_drift'
+      issue.category === 'schema_drift' ||
+      issue.category === 'content_difference' ||
+      issue.category === 'formatting'
   );
 
   return (
     <article
       id={`pair-${pair.pairId}`}
+      tabIndex={-1}
       data-testid={`pair-card-${pair.pairId}`}
       className={`scroll-mt-32 bg-white border border-slate-200 rounded-lg overflow-hidden transition-shadow ${
         isFlashed ? 'card-flash-target' : ''
@@ -117,6 +125,11 @@ export function TemplatePairCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
+          {pair.tokenSetsMatch && (
+            <span className="px-2 py-0.5 text-[11px] font-semibold rounded border border-slate-300">
+              Exact token sets match
+            </span>
+          )}
           {pair.statuses.map((st) => (
             <span
               key={st}
@@ -137,10 +150,10 @@ export function TemplatePairCard({
                 English · {pair.mode} {pair.smsType}
               </div>
               <p className="text-sm font-semibold text-amber-900">
-                Missing Template in Dataverse
+                Not in supplied snapshot
               </p>
               <p className="text-xs text-slate-600 mt-1">
-                No English {pair.smsType.toLowerCase()} template exists for consultation mode {pair.mode}.
+                The supplied snapshot contains no English {pair.smsType.toLowerCase()} template for mode {pair.mode}.
               </p>
             </div>
             <div className="p-4 rounded-md border border-dashed border-amber-300 bg-white">
@@ -148,10 +161,10 @@ export function TemplatePairCard({
                 Arabic · {pair.mode} {pair.smsType}
               </div>
               <p className="text-sm font-semibold text-amber-900">
-                Missing Template in Dataverse
+                Not in supplied snapshot
               </p>
               <p className="text-xs text-slate-600 mt-1">
-                No Arabic {pair.smsType.toLowerCase()} template exists for consultation mode {pair.mode}. Automated reminder sends for this mode cannot resolve a template.
+                The supplied snapshot contains no Arabic {pair.smsType.toLowerCase()} template for mode {pair.mode}. Whether live coverage is required or available is not verified.
               </p>
             </div>
           </div>
@@ -171,8 +184,10 @@ export function TemplatePairCard({
                 </span>
               </div>
               {pair.en ? (
-                <VerbatimTemplateBody
+                <>
+                  <VerbatimTemplateBody
                   body={pair.en.body}
+                  sourceTemplateKey={pair.en.key}
                   language="English"
                   tokenMap={pair.enTokenMap}
                   selectedFieldId={selectedFieldId}
@@ -181,7 +196,13 @@ export function TemplatePairCard({
                   onTokenClick={(tok, fid, lang) =>
                     onSelectToken(pair.pairId, tok, fid, lang)
                   }
-                />
+                  />
+                  <details className="mt-3 text-xs">
+                    <summary className="cursor-pointer underline">Show exact English source text</summary>
+                    <pre lang="en" dir="ltr"
+                      className="mt-1 whitespace-pre-wrap break-words rounded border p-2">{pair.en.body}</pre>
+                  </details>
+                </>
               ) : (
                 <p className="text-xs text-red-700 font-medium">
                   English template missing for this slot.
@@ -200,8 +221,10 @@ export function TemplatePairCard({
                 </span>
               </div>
               {pair.ar ? (
-                <VerbatimTemplateBody
+                <>
+                  <VerbatimTemplateBody
                   body={pair.ar.body}
+                  sourceTemplateKey={pair.ar.key}
                   language="Arabic"
                   tokenMap={pair.arTokenMap}
                   selectedFieldId={selectedFieldId}
@@ -210,7 +233,13 @@ export function TemplatePairCard({
                   onTokenClick={(tok, fid, lang) =>
                     onSelectToken(pair.pairId, tok, fid, lang)
                   }
-                />
+                  />
+                  <details className="mt-3 text-xs">
+                    <summary className="cursor-pointer underline">Show exact Arabic source text</summary>
+                    <pre lang="ar" dir="rtl"
+                      className="mt-1 whitespace-pre-wrap break-words rounded border p-2">{pair.ar.body}</pre>
+                  </details>
+                </>
               ) : (
                 <p className="text-xs text-red-700 font-medium">
                   Arabic template missing for this slot.
@@ -282,8 +311,9 @@ export function TemplatePairCard({
                     <>
                       <button
                         type="button"
-                        onClick={() =>
-                          onJumpToTokenMatrix(selectedRow.fieldId, activeTokenValue)
+                        id={evidenceAnchor('template-matrix', pair.pairId, selectedRow.fieldId)}
+                        onClick={(event) =>
+                          onJumpToTokenMatrix(selectedRow.fieldId, activeTokenValue, event.currentTarget.id)
                         }
                         className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-900 bg-white border border-slate-300 rounded hover:bg-slate-100 transition-colors cursor-pointer whitespace-nowrap"
                       >
@@ -334,6 +364,23 @@ export function TemplatePairCard({
                       {alert.title}:
                     </span>{' '}
                     <span>{alert.explanation}</span>
+                    {alert.interpretation && <p>Interpretation: {alert.interpretation}</p>}
+                    {alert.runtimeStatus && <p>Runtime: {alert.runtimeStatus}</p>}
+                    <div className="flex flex-wrap gap-2">
+                      {(alert.evidence ?? [{ pairId: pair.pairId, language: alert.language }])
+                        .map((source, index) => {
+                          const anchor = evidenceAnchor('pair-alert', pair.pairId, alert.id, index);
+                          return (
+                            <button key={anchor} id={anchor} type="button"
+                              onClick={() => onJumpToSource(source.pairId,
+                                source.pairId === pair.pairId ? alert.token ?? null : null,
+                                source.language, 'Finding explanation', anchor)}
+                              className="underline underline-offset-2">
+                              {source.pairId} · {source.language === 'Both' ? 'Compare sources' : source.language}
+                            </button>
+                          );
+                        })}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -350,7 +397,7 @@ export function TemplatePairCard({
             >
               <span>
                 Token Mapping & Plain-English Explanation ({pair.fieldRows.length}{' '}
-                fields) — click any row to highlight in message above
+                fields) — choose a token or an evidence action
               </span>
               {tableOpen ? (
                 <ChevronUp className="w-4 h-4 shrink-0" aria-hidden="true" />
@@ -410,14 +457,9 @@ export function TemplatePairCard({
                             {row.enToken ? (
                               <button
                                 type="button"
-                                onClick={() =>
-                                  onSelectToken(
-                                    pair.pairId,
-                                    row.enToken!,
-                                    row.fieldId,
-                                    'English'
-                                  )
-                                }
+                                id={evidenceAnchor('mapping-token-en', pair.pairId, row.fieldId)}
+                                onClick={(event) => onJumpToSource(pair.pairId, row.enToken,
+                                  'English', 'Token mapping', event.currentTarget.id)}
                                 className={`sms-token ${MINI_TOKEN_SEVERITY[enSev]} ${
                                   isRowSelected &&
                                   (selectedLanguage === 'English' ||
@@ -438,14 +480,9 @@ export function TemplatePairCard({
                             {row.arToken ? (
                               <button
                                 type="button"
-                                onClick={() =>
-                                  onSelectToken(
-                                    pair.pairId,
-                                    row.arToken!,
-                                    row.fieldId,
-                                    'Arabic'
-                                  )
-                                }
+                                id={evidenceAnchor('mapping-token-ar', pair.pairId, row.fieldId)}
+                                onClick={(event) => onJumpToSource(pair.pairId, row.arToken,
+                                  'Arabic', 'Token mapping', event.currentTarget.id)}
                                 className={`sms-token ${MINI_TOKEN_SEVERITY[arSev]} ${
                                   isRowSelected &&
                                   (selectedLanguage === 'Arabic' ||
@@ -471,6 +508,13 @@ export function TemplatePairCard({
                           </td>
                           <td className="py-2 px-4 text-slate-600 leading-relaxed align-top">
                             {row.explanation}
+                            <button type="button" id={evidenceAnchor('mapping-explanation', pair.pairId, row.fieldId)}
+                              onClick={(event) => onJumpToSource(pair.pairId, row.enToken ?? row.arToken,
+                                row.enToken ? 'English' : row.arToken ? 'Arabic' : 'Both',
+                                'Mapping explanation', event.currentTarget.id)}
+                              className="ml-2 underline underline-offset-2">
+                              View evidence
+                            </button>
                           </td>
                         </tr>
                       );

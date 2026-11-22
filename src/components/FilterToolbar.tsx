@@ -4,7 +4,7 @@ import type {
   IssueCategory,
   SmsType,
 } from '../types/sms';
-import { MODE_META, MODE_ORDER, SMS_TYPE_ORDER } from '../utils/templateParser';
+import { MODE_ORDER, SMS_TYPE_ORDER } from '../utils/templateParser';
 
 interface FilterToolbarProps {
   modeFilter: ConsultationModeCode | 'ALL';
@@ -32,9 +32,11 @@ const CATEGORY_OPTIONS: Array<{ value: IssueCategory | 'ALL'; label: string }> =
   { value: 'ALL', label: 'All Issue Categories' },
   { value: 'typo_malformed', label: 'Typo / Malformed Tokens' },
   { value: 'swapped_missing', label: 'Swapped / Misplaced / Truncated / Missing' },
-  { value: 'en_ar_mismatch', label: 'EN/AR Token Name Mismatches' },
+  { value: 'en_ar_mismatch', label: 'EN/AR Token Mapping Differences' },
   { value: 'casing_drift', label: 'Casing Drift' },
   { value: 'schema_drift', label: 'Within-Mode Schema Drift' },
+  { value: 'content_difference', label: 'Message Content Differences' },
+  { value: 'formatting', label: 'Source Formatting and Adjacent Text' },
 ];
 
 export function FilterToolbar({
@@ -157,7 +159,7 @@ export function FilterToolbar({
             <option value="ALL">All Consultation Modes (10)</option>
             {MODE_ORDER.map((m) => (
               <option key={m} value={m}>
-                {m} — {MODE_META[m].name}
+                {m}
               </option>
             ))}
           </select>

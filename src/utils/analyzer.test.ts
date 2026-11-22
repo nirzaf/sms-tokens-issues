@@ -111,16 +111,40 @@ test('verifies exact counts and detection of critical defects from attached MD f
   assert.ok(byId.get('VD-Cancellation')!.statuses.includes('Typo / Broken'));
 
   // 8. Concatenated #PFACILITY##PDAY# in BL-Confirmation AR and BL-Cancellation AR
-  assert.ok(byId.get('BL-Confirmation')!.statuses.includes('Typo / Broken'));
-  assert.ok(byId.get('BL-Cancellation')!.statuses.includes('Typo / Broken'));
+  assert.ok(byId.get('BL-Confirmation')!.statuses.includes('Formatting difference'));
+  assert.ok(byId.get('BL-Cancellation')!.statuses.includes('Formatting difference'));
 
   // 9. Missing #PNAME# in DR-Cancellation AR and DR-Reschedule AR
   assert.ok(byId.get('DR-Cancellation')!.statuses.includes('Truncated / Missing'));
   assert.ok(byId.get('DR-Reschedule')!.statuses.includes('Truncated / Missing'));
 
   // 10. Consistent EN/AR pairs: BL-Reschedule & BS-Cancellation
-  assert.equal(byId.get('BL-Reschedule')!.isConsistent, true);
+  assert.equal(byId.get('BL-Reschedule')!.isConsistent, false);
+  assert.ok(byId.get('BL-Reschedule')!.issues.some((issue) => issue.category === 'formatting'));
   assert.equal(byId.get('BS-Cancellation')!.isConsistent, true);
-  assert.equal(report.summary.consistentPairs, 2);
-  assert.equal(report.summary.inconsistentPairs, 38);
+  assert.equal(report.summary.consistentPairs, 1);
+  assert.equal(report.summary.inconsistentPairs, 39);
+});
+
+
+test('separates snapshot observations, source severity, and token spelling inventory', () => {
+  const report = analyzeTemplatesMarkdown(RAW_MARKDOWN);
+  const byId = new Map(report.allPairs.map((pair) => [pair.pairId, pair]));
+  for (const pair of report.allPairs) {
+    assert.equal(pair.hasCriticalDefect, pair.issues.some((issue) => issue.severity === 'critical'));
+    assert.equal(new Set(pair.issues.map((issue) => issue.id)).size, pair.issues.length);
+  }
+  assert.equal(report.allPairs.flatMap((pair) => pair.issues).filter((issue) => issue.id.includes('-prose-joins-')).length, 28);
+  const missing = byId.get('EP-Reminder')!.issues[0];
+  assert.match(missing.explanation, /supplied snapshot/);
+  assert.equal(missing.runtimeStatus, 'Not verified');
+  for (const pairId of ['BST-Reminder', 'CV-Reminder', 'RO-Reschedule', 'BL-Reminder', 'EP-Cancellation']) {
+    assert.ok(byId.get(pairId)!.issues.some((issue) => issue.category === 'content_difference' && issue.evidence?.length));
+  }
+  assert.equal(report.summary.criticalPairCount, new Set(report.criticalDefects.map((item) => item.pairId)).size);
+  assert.equal(report.summary.criticalDefectCount, report.criticalDefects.length);
+  const name = report.tokenMatrix.flatMap((group) => group.variants).find((item) => item.token === '#PNAME#')!;
+  assert.equal(name.severity, 'consistent');
+  assert.equal(name.count, 40);
+  assert.ok(name.occurrences.every((occurrence) => typeof occurrence.occurrenceIndex === 'number'));
 });

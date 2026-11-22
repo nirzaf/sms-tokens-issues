@@ -24,6 +24,7 @@ import {
   MODE_ORDER,
   SMS_TYPE_ORDER,
   parseTemplatesMarkdown,
+  tokenizeTemplateBody,
 } from './templateParser';
 
 export interface FieldDefinition {
@@ -262,20 +263,20 @@ function isTypoToken(token: string): { isTypo: boolean; reason: string } {
     return {
       isTypo: true,
       reason:
-        'Truncated placeholder #PA# (incomplete #PADATE#) will fail replacement and leave "#PA#" raw in the cancelled appointment SMS.',
+        'The snapshot contains #PA#. Its date context suggests #PADATE#, but supported keys and rendered output are not verified.',
     };
   }
   if (/NMAE/i.test(token)) {
     const corrected = token.replace(/NMAE/i, 'NAME');
     return {
       isTypo: true,
-      reason: `Misspelled token ${token} ("NMAE" instead of "NAME", expected ${corrected}) risks failing token substitution and appearing raw to patients.`,
+      reason: `Misspelled token ${token} contains "NMAE"; ${corrected} is a candidate spelling. Replacement support is unverified.`,
     };
   }
   if (/^#[A-Z]+[a-z][A-Z]+#$/.test(token)) {
     return {
       isTypo: true,
-      reason: `Malformed mixed-case typo ${token} (lowercase "i" inside all-caps token) can break case-sensitive resolvers and drifts from ${token.toUpperCase()}.`,
+      reason: `Malformed mixed-case typo ${token} (lowercase "i" inside all-caps token) differs in casing from ${token.toUpperCase()}.`,
     };
   }
   return { isTypo: false, reason: '' };
@@ -404,7 +405,7 @@ function detectModeSchemaDriftNotes(
         ? ' Even worse, BST is a telephone consultation (prepare 15 min ahead), yet the generic Reminder instructs patients to arrive in person 30 min early.'
         : '';
     notes.push(
-      `${mode}-Reminder switches to a copy-pasted generic schema (#FACILITY_E#/#FACILITY_A#, #CLINIC_NAME#, #ApptDate#/#ApptDay#/#ApptTime#) and hardcodes helpline 107 instead of ${modeSpecificPhone}.${extraContext}`
+      `${mode}-Reminder switches to a generic-looking schema (#FACILITY_E#/#FACILITY_A#, #CLINIC_NAME#, #ApptDate#/#ApptDay#/#ApptTime#) and hardcodes helpline 107 instead of ${modeSpecificPhone}.${extraContext}`
     );
   }
 
@@ -438,6 +439,91 @@ function detectModeSchemaDriftNotes(
   return notes;
 }
 
+function withEvidence(issue: PairIssueDetail, pairId: string): PairIssueDetail {
+  return {
+    ...issue,
+    evidenceConfidence: 'Observed in snapshot',
+    runtimeStatus: 'Not verified',
+    interpretation: issue.interpretation ?? 'Compare this source difference against approved wording or the replacement-key contract before changing it.',
+    evidence: issue.evidence ?? [{ pairId, language: issue.language }],
+  };
+}
+
+const CONTENT_REVIEW: Record<string, { title: string; observation: string; interpretation: string; compare: string[]; language?: TemplateLanguage; severity: 'critical' | 'warning' }> = {
+  'BST-Reminder': {
+    title: 'Phone consultation versus clinic arrival',
+    observation: 'BST Confirmation and Reschedule describe a phone consultation and ask for preparation 15 minutes early. Reminder asks for clinic arrival 30 minutes early.',
+    interpretation: 'Confirm the approved appointment modality and preparation instruction; either message may need business review.',
+    compare: ['BST-Confirmation', 'BST-Reschedule'], severity: 'critical',
+  },
+  'CV-Reminder': {
+    title: 'Reminder lead time differs',
+    observation: 'CV Reminder asks for arrival 30 minutes early. Confirmation and Reschedule ask for 15 minutes.',
+    interpretation: 'Confirm the approved lead time; the export does not establish which timing is intended.',
+    compare: ['CV-Confirmation', 'CV-Reschedule'], severity: 'warning',
+  },
+  'RO-Reschedule': {
+    title: 'Arabic reminder wording in a reschedule',
+    observation: 'Arabic uses reminder wording (ارجو التذكير) without explicitly saying the appointment was rescheduled. English explicitly says it was rescheduled.',
+    interpretation: 'Confirm equivalent event wording in both languages.',
+    compare: [], language: 'Arabic', severity: 'critical',
+  },
+  'BL-Reminder': {
+    title: 'Survey preparation and contact differ',
+    observation: 'BL Reminder uses 107 and does not mention the blindness survey or the glasses and identification instructions visible in Confirmation and Reschedule.',
+    interpretation: 'Confirm whether Reminder needs the survey context, preparation details, or separate contact route.',
+    compare: ['BL-Confirmation', 'BL-Reschedule'], severity: 'warning',
+  },
+  'EP-Cancellation': {
+    title: 'Cancellation contact route differs',
+    observation: 'EP Cancellation lists 107; Confirmation and Reschedule list 40271030, 40271014, and 40271102.',
+    interpretation: 'Confirm which contact route applies to the cancellation; the export does not establish that the difference is wrong.',
+    compare: ['EP-Confirmation', 'EP-Reschedule'], severity: 'warning',
+  },
+};
+
+function findTokenProseJoins(body: string): string[] {
+  const segments = tokenizeTemplateBody(body);
+  const matches: string[] = [];
+  for (const [index, segment] of segments.entries()) {
+    if (segment.type !== 'token') continue;
+    const preceding = segments[index - 1];
+    const following = segments[index + 1];
+    const left = preceding?.type === 'text' ? preceding.value.match(/[\p{L}\p{N}]+$/u)?.[0] : undefined;
+    const right = following?.type === 'text' ? following.value.match(/^[\p{L}\p{N}]+/u)?.[0] : undefined;
+    if (left) matches.push(left + segment.value);
+    if (right) matches.push(segment.value + right);
+  }
+  return matches;
+}
+
+function curatedSourceIssues(pairId: string, en: ParsedTemplate | null, ar: ParsedTemplate | null): PairIssueDetail[] {
+  const findings: PairIssueDetail[] = [];
+  const review = CONTENT_REVIEW[pairId];
+  if (review && en && ar) findings.push({
+    id: `${pairId}-content-review`, category: 'content_difference', severity: review.severity,
+    language: review.language ?? 'Both', title: review.title, explanation: review.observation,
+    interpretation: review.interpretation,
+    evidence: [pairId, ...review.compare].map((id) => ({ pairId: id, language: 'Both' as const })),
+  });
+  for (const template of [en, ar]) {
+    if (!template) continue;
+    const actual = findTokenProseJoins(template.body);
+    if (pairId === 'BL-Reschedule' && template.language === 'English') {
+      actual.push(...['have.HC', '51098065Thank You'].filter((sample) => template.body.includes(sample)));
+    }
+    if (!actual.length) continue;
+    findings.push({
+      id: `${pairId}-prose-joins-${template.language}`, category: 'formatting',
+      severity: pairId === 'BL-Reschedule' && template.language === 'English' ? 'warning' : 'info',
+      language: template.language, title: 'No separator at source word boundaries',
+      explanation: `${template.language} contains these exact joins: ${[...new Set(actual)].join(', ')}.`,
+      interpretation: 'This is literal adjacency only. Check intended spacing and resolved values; Arabic attachment may be intentional.',
+    });
+  }
+  return findings;
+}
+
 function buildPairAnalysis(
   mode: ConsultationModeCode,
   smsType: SmsType,
@@ -454,7 +540,7 @@ function buildPairAnalysis(
       severity: 'critical',
       language: 'Both',
       title: `Missing ${pairId} templates (EN & AR)`,
-      explanation: `No English or Arabic Reminder template exists in Dataverse for Consultation Mode ${mode}; automated reminder jobs for ${MODE_META[mode].name} have no template to send.`,
+      explanation: `No English or Arabic template for ${pairId} appears in the supplied snapshot. Required coverage, fallback, and delivery are not verified.`,
     };
     return {
       pairId,
@@ -468,15 +554,21 @@ function buildPairAnalysis(
       isConsistent: false,
       hasCriticalDefect: true,
       fieldRows: [],
-      issues: [missingIssue],
+      issues: [withEvidence(missingIssue, pairId)],
+      tokenSetsMatch: false,
       enTokenMap: {},
       arTokenMap: {},
     };
   }
 
-  const issues: PairIssueDetail[] = [];
+  const issues: PairIssueDetail[] = curatedSourceIssues(pairId, en, ar);
+
   const categoriesSet = new Set<IssueCategory>();
   const statusesSet = new Set<PairStatusBadge>();
+  for (const issue of issues) {
+    categoriesSet.add(issue.category);
+    statusesSet.add(issue.category === 'formatting' ? 'Formatting difference' : 'Source text differs');
+  }
 
   const enByField = new Map<SemanticFieldId, string>();
   const arByField = new Map<SemanticFieldId, string>();
@@ -529,8 +621,8 @@ function buildPairAnalysis(
       severity: 'warning',
       language: 'Both',
       fieldId: 'facility',
-      title: 'Generic Reminder schema replaces mode-specific tokens & phone',
-      explanation: `${pairId} switches to a copy-pasted generic Reminder template (#FACILITY_E#/#FACILITY_A#, #CLINIC_NAME#, #ApptDate#/#ApptDay#/#ApptTime#) and hardcodes helpline 107 instead of the ${mode} service helpline.`,
+      title: 'Reminder uses different token names and contact text',
+      explanation: `${pairId} switches to a generic-looking Reminder template (#FACILITY_E#/#FACILITY_A#, #CLINIC_NAME#, #ApptDate#/#ApptDay#/#ApptTime#) and shows 107; compare the contact text in the same-mode non-reminders.`,
     });
   }
 
@@ -543,7 +635,7 @@ function buildPairAnalysis(
       severity: 'warning',
       language: 'Both',
       fieldId: 'facility',
-      title: 'Completely different token schema from EP Confirmation/Reschedule',
+      title: 'EP Cancellation uses different token names',
       explanation: `EP-Cancellation switches from #PNAME#/#PFACILITY# to #NAME#/#HCName#/#ClinicName# (EN) and mixes suffix/prefix Arabic names (#NameA#, #DayA#, #DateA# vs #AHCName#, #AClinicname#, #ATime#).`,
     });
   }
@@ -572,9 +664,10 @@ function buildPairAnalysis(
       severity: 'critical',
       language: 'Arabic',
       token: arSwapped.timeToken,
+      relatedTokens: [arSwapped.timeToken, arSwapped.dateToken].filter((value): value is string => !!value),
       fieldId: 'time',
       title: `Swapped Date and Time tokens in Arabic (${arSwapped.timeToken} / ${arSwapped.dateToken})`,
-      explanation: `Arabic places ${arSwapped.timeToken} immediately after "بتاريخ" (Date) and ${arSwapped.dateToken} after "الساعة" (Time), displaying the appointment time as the date and the date as the time.`,
+      explanation: `Arabic places ${arSwapped.timeToken} immediately after "بتاريخ" (Date) and ${arSwapped.dateToken} after "الساعة" (Time), suggesting a date/time placement reversal. The replacement values were not observed.`,
     });
   }
 
@@ -609,37 +702,29 @@ function buildPairAnalysis(
     });
   }
 
-  for (const qTok of [...enQuotes, ...arQuotes]) {
-    const lang: TemplateLanguage = arQuotes.includes(qTok) ? 'Arabic' : 'English';
-    categoriesSet.add('typo_malformed');
-    statusesSet.add('Typo / Broken');
-    issues.push({
-      id: `${pairId}-stray-quote-${qTok}`,
-      category: 'typo_malformed',
-      severity: 'critical',
-      language: lang,
-      token: qTok,
-      fieldId: getTokenField(qTok),
-      title: `Stray double quote before ${qTok}`,
-      explanation: `${lang} contains a stray opening quotation mark ("${qTok}) with no closing quote, leaving broken punctuation in the patient SMS.`,
+  for (const [language, quotes, joins] of [
+    ['English', enQuotes, enConcats], ['Arabic', arQuotes, arConcats],
+  ] as const) {
+    quotes.forEach((token, index) => {
+      categoriesSet.add('typo_malformed');
+      statusesSet.add('Typo / Broken');
+      issues.push({
+        id: `${pairId}-stray-quote-${language}-${index}`, category: 'typo_malformed',
+        severity: 'warning', language, token, fieldId: getTokenField(token),
+        title: `Stray double quote before ${token}`,
+        explanation: `${language} contains a stray opening quotation mark before ${token} in the source.`,
+      });
     });
-  }
-
-  for (const [t1, t2] of [...enConcats, ...arConcats]) {
-    const lang: TemplateLanguage = arConcats.some(([a, b]) => a === t1 && b === t2)
-      ? 'Arabic'
-      : 'English';
-    categoriesSet.add('typo_malformed');
-    statusesSet.add('Typo / Broken');
-    issues.push({
-      id: `${pairId}-concat-${t1}-${t2}`,
-      category: 'typo_malformed',
-      severity: 'critical',
-      language: lang,
-      token: t1,
-      fieldId: getTokenField(t1),
-      title: `Concatenated tokens ${t1}${t2} with no space`,
-      explanation: `${lang} joins ${t1} and ${t2} directly together without a space, causing the health center name and day of week to merge into one unreadable word.`,
+    joins.forEach(([first, second], index) => {
+      categoriesSet.add('formatting');
+      statusesSet.add('Formatting difference');
+      issues.push({
+        id: `${pairId}-concat-${language}-${index}`, category: 'formatting',
+        severity: 'warning', language, token: first, relatedTokens: [first, second], fieldId: getTokenField(first),
+        title: `Adjacent placeholders ${first}${second}`,
+        explanation: `${language} joins these exact placeholders without a literal separator in the source.`,
+        interpretation: 'Confirm the intended separator and whether the renderer or data supplies one.',
+      });
     });
   }
 
@@ -655,7 +740,7 @@ function buildPairAnalysis(
       fieldId: 'overseas_phone',
       title: 'Broken parentheses ") (#POVRPHONE#" in Arabic',
       explanation:
-        'Arabic wraps #POVRPHONE# with malformed parentheses ") (#POVRPHONE#", causing the overseas helpline number to render with stray brackets in RTL text.',
+        'Arabic wraps #POVRPHONE# with malformed parentheses ") (#POVRPHONE#", in the supplied source. Rendered RTL output was not inspected.',
     });
   }
 
@@ -748,10 +833,14 @@ function buildPairAnalysis(
         categoriesSet.add('casing_drift');
         statusesSet.add('Casing Drift');
         statusLabel = 'Casing Drift';
-        const msg = `English uses ${enTok} while Arabic uses ${arTok} — identical name with inconsistent letter casing that breaks case-sensitive replacement.`;
+        const msg = `English uses ${enTok} while Arabic uses ${arTok} — the spellings differ only in casing; support for either key is unverified.`;
         explanations.push(msg);
         enNotes.push(msg);
         arNotes.push(msg);
+        issues.push({
+          id: `${pairId}-casing-${fieldId}`, category: 'casing_drift', severity: 'info',
+          language: 'Both', relatedTokens: [enTok, arTok], fieldId, title: 'Token casing differs', explanation: msg,
+        });
       } else {
         rowSeverity = maxSeverity(rowSeverity, 'mismatch');
         enSeverity = maxSeverity(enSeverity, 'mismatch');
@@ -766,6 +855,11 @@ function buildPairAnalysis(
         explanations.push(msg);
         enNotes.push(msg);
         arNotes.push(msg);
+        issues.push({
+          id: `${pairId}-mapping-${fieldId}`, category: 'en_ar_mismatch', severity: 'info',
+          language: 'Both', relatedTokens: [enTok, arTok], fieldId, title: 'EN/AR token mapping differs', explanation: msg,
+          interpretation: 'Different tokens may intentionally select localized values; validate the mapping before renaming either key.',
+        });
       }
     }
 
@@ -981,9 +1075,31 @@ function buildPairAnalysis(
   const statuses: PairStatusBadge[] =
     statusesSet.size === 0 ? ['Consistent'] : sortBadges([...statusesSet]);
   const categories = [...categoriesSet];
+  const enTokens = new Set(en?.tokens ?? []);
+  const arTokens = new Set(ar?.tokens ?? []);
+  const tokenSetsMatch = !!en && !!ar && enTokens.size === arTokens.size &&
+    [...enTokens].every((token) => arTokens.has(token));
   const isConsistent = categories.length === 0;
-  const hasCriticalDefect =
-    categoriesSet.has('typo_malformed') || categoriesSet.has('swapped_missing');
+  const hasCriticalDefect = issues.some((issue) => issue.severity === 'critical');
+
+  for (const row of fieldRows) {
+    const applicable = issues.filter((issue) => issue.fieldId === row.fieldId ||
+      [row.enToken, row.arToken].some((token) => token && issue.relatedTokens?.includes(token)));
+    if (applicable.some((issue) => issue.severity === 'critical')) row.severity = 'critical';
+    else if (row.severity === 'critical') row.severity = applicable.length ? 'mismatch' : 'drift';
+    for (const issue of applicable) {
+      if (!row.categories.includes(issue.category)) row.categories.push(issue.category);
+    }
+  }
+
+  for (const [language, map] of [['English', enTokenMap], ['Arabic', arTokenMap]] as const) {
+    for (const info of Object.values(map)) {
+      const applicable = issues.filter((issue) => (issue.language === language || issue.language === 'Both') &&
+        (issue.token === info.token || issue.relatedTokens?.includes(info.token) || (!issue.token && !issue.relatedTokens && issue.fieldId === info.fieldId)));
+      if (applicable.some((issue) => issue.severity === 'critical')) info.severity = 'critical';
+      else if (info.severity === 'critical') info.severity = applicable.length ? 'mismatch' : 'drift';
+    }
+  }
 
   return {
     pairId,
@@ -997,7 +1113,8 @@ function buildPairAnalysis(
     isConsistent,
     hasCriticalDefect,
     fieldRows,
-    issues,
+    issues: issues.map((issue) => withEvidence(issue, pairId)),
+    tokenSetsMatch,
     enTokenMap,
     arTokenMap,
   };
@@ -1010,6 +1127,8 @@ const BADGE_ORDER: PairStatusBadge[] = [
   'EN/AR Mismatch',
   'Casing Drift',
   'Schema Drift',
+  'Source text differs',
+  'Formatting difference',
   'Consistent',
 ];
 
@@ -1023,215 +1142,19 @@ function sortBadges(badges: PairStatusBadge[]): PairStatusBadge[] {
  * Dynamically extracts the "Top Critical Defects at a Glance" directly from the analyzed pairs,
  * ordered by patient & system risk severity.
  */
-function buildCriticalDefects(
-  allPairs: TemplatePairAnalysis[]
-): CriticalDefectItem[] {
-  const defects: CriticalDefectItem[] = [];
-
-  for (const pair of allPairs) {
-    // 1. Missing pair (e.g., EP-Reminder)
-    if (pair.isMissingPair) {
-      defects.push({
-        id: `crit-${pair.pairId}-missing`,
-        pairId: pair.pairId,
-        mode: pair.mode,
-        smsType: pair.smsType,
-        language: 'Both',
-        defectType: 'Truncated / Missing',
-        token: null,
-        fieldId: null,
-        summary: `Missing ${pair.pairId} templates (both EN and AR absent)`,
-        impact: `No Reminder template exists in Dataverse for ${MODE_META[pair.mode].name} (${pair.mode}), preventing automated appointment reminders.`,
-      });
-      continue;
-    }
-
-    // 2. Truncated #PA# token
-    if (pair.ar?.tokens.includes('#PA#')) {
-      defects.push({
-        id: `crit-${pair.pairId}-pa`,
-        pairId: pair.pairId,
-        mode: pair.mode,
-        smsType: pair.smsType,
-        language: 'Arabic',
-        defectType: 'Typo / Broken',
-        token: '#PA#',
-        fieldId: 'date',
-        summary: 'Truncated token #PA# (broken #PADATE#)',
-        impact: 'Invalid placeholder fails replacement and exposes raw "#PA#" instead of the cancelled appointment date.',
-      });
-    }
-
-    // 3. Severe truncation (SC-Confirmation AR) & mid-phrase truncation (BS-Confirmation AR)
-    const trunc = isAbruptlyTruncatedAr(pair.en, pair.ar);
-    if (trunc.truncated) {
-      defects.push({
-        id: `crit-${pair.pairId}-trunc`,
-        pairId: pair.pairId,
-        mode: pair.mode,
-        smsType: pair.smsType,
-        language: 'Arabic',
-        defectType: 'Truncated / Missing',
-        token: trunc.severity === 'severe' ? '#PTIME#' : null,
-        fieldId: trunc.severity === 'severe' ? 'time' : null,
-        summary:
-          trunc.severity === 'severe'
-            ? 'Arabic message abruptly truncated after #PTIME#'
-            : 'Arabic message cut off mid-sentence at "و 3:00"',
-        impact: trunc.explanation,
-      });
-    }
-
-    // 4. Swapped Date / Time after Arabic labels
-    if (pair.ar) {
-      const swapped = hasSwappedArabicDateTime(pair.ar.body);
-      if (swapped.swapped) {
-        defects.push({
-          id: `crit-${pair.pairId}-swap`,
-          pairId: pair.pairId,
-          mode: pair.mode,
-          smsType: pair.smsType,
-          language: 'Arabic',
-          defectType: 'Swapped / Misplaced',
-          token: swapped.timeToken ?? null,
-          fieldId: 'time',
-          summary: `Swapped Date & Time: بتاريخ ${swapped.timeToken} الساعة ${swapped.dateToken}`,
-          impact: 'Patients see the appointment time printed under "Date" and the date printed under "Time".',
-        });
-      }
-    }
-
-    // 5. Misplaced #PMSGA# in Arabic date clause
-    if (pair.ar && hasMisplacedPmsga(pair.ar.body)) {
-      defects.push({
-        id: `crit-${pair.pairId}-pmsga`,
-        pairId: pair.pairId,
-        mode: pair.mode,
-        smsType: pair.smsType,
-        language: 'Arabic',
-        defectType: 'Swapped / Misplaced',
-        token: '#PMSGA#',
-        fieldId: 'extra_msg',
-        summary: 'Misplaced #PMSGA# between "بتاريخ" and date tokens',
-        impact: 'Extra message text is injected right inside the Arabic date phrase before #PDAY# #PAPPTDATE#.',
-      });
-    }
-
-    // 6. Misspelled NMAE tokens
-    const enNmae = pair.en?.tokens.find((t) => /NMAE/i.test(t));
-    const arNmae = pair.ar?.tokens.find((t) => /NMAE/i.test(t));
-    if (enNmae || arNmae) {
-      const both = enNmae && arNmae;
-      defects.push({
-        id: `crit-${pair.pairId}-nmae`,
-        pairId: pair.pairId,
-        mode: pair.mode,
-        smsType: pair.smsType,
-        language: both ? 'Both' : enNmae ? 'English' : 'Arabic',
-        defectType: 'Typo / Broken',
-        token: enNmae ?? arNmae ?? null,
-        fieldId: 'facility',
-        summary: both
-          ? `Misspelled Facility tokens ${enNmae} (EN) & ${arNmae} (AR)`
-          : `Misspelled Facility token ${enNmae ?? arNmae} (while AR uses #PAFACILITYNAME#)`,
-        impact: 'Transposed "NMAE" spelling may fail token substitution and show raw placeholder text to patients.',
-      });
-    }
-
-    // 7. Mixed-case typo #PFACiLITY#
-    if (pair.en?.tokens.includes('#PFACiLITY#')) {
-      defects.push({
-        id: `crit-${pair.pairId}-pfacility-typo`,
-        pairId: pair.pairId,
-        mode: pair.mode,
-        smsType: pair.smsType,
-        language: 'English',
-        defectType: 'Typo / Broken',
-        token: '#PFACiLITY#',
-        fieldId: 'facility',
-        summary: 'Mixed-case typo #PFACiLITY# (lowercase "i")',
-        impact: 'Case-sensitive template engines fail to match #PFACiLITY# against #PFACILITY#.',
-      });
-    }
-
-    // 8. Stray double quote "#PAPPTDATE#
-    if (pair.ar && findLeadingQuoteTokens(pair.ar.body).length > 0) {
-      const qTok = findLeadingQuoteTokens(pair.ar.body)[0];
-      defects.push({
-        id: `crit-${pair.pairId}-quote`,
-        pairId: pair.pairId,
-        mode: pair.mode,
-        smsType: pair.smsType,
-        language: 'Arabic',
-        defectType: 'Typo / Broken',
-        token: qTok,
-        fieldId: getTokenField(qTok),
-        summary: `Stray double quote before "${qTok}`,
-        impact: 'Unclosed quotation mark immediately before the date token renders broken punctuation in Arabic.',
-      });
-    }
-
-    // 9. Concatenated tokens #PFACILITY##PDAY#
-    if (pair.ar && findConcatenatedPairs(pair.ar.body).length > 0) {
-      const [t1, t2] = findConcatenatedPairs(pair.ar.body)[0];
-      defects.push({
-        id: `crit-${pair.pairId}-concat`,
-        pairId: pair.pairId,
-        mode: pair.mode,
-        smsType: pair.smsType,
-        language: 'Arabic',
-        defectType: 'Typo / Broken',
-        token: t1,
-        fieldId: getTokenField(t1),
-        summary: `Concatenated tokens ${t1}${t2} with missing space`,
-        impact: 'Health center name and weekday collide with no separator in the delivered Arabic SMS.',
-      });
-    }
-
-    // 10. Missing #PNAME# in DR-Cancellation / DR-Reschedule AR
-    if (
-      pair.mode === 'DR' &&
-      (pair.smsType === 'Cancellation' || pair.smsType === 'Reschedule') &&
-      pair.en?.tokens.includes('#PNAME#') &&
-      !pair.ar?.tokens.some((t) => getTokenField(t) === 'patient_name')
-    ) {
-      defects.push({
-        id: `crit-${pair.pairId}-missing-pname`,
-        pairId: pair.pairId,
-        mode: pair.mode,
-        smsType: pair.smsType,
-        language: 'Arabic',
-        defectType: 'Truncated / Missing',
-        token: '#PNAME#',
-        fieldId: 'patient_name',
-        summary: 'Arabic omits #PNAME# patient name placeholder',
-        impact: 'English addresses the patient by name, while Arabic sends a generic "عميلنا العزيز" with no patient identifier.',
-      });
-    }
-  }
-
-  // Sort by clinical/system severity priority
-  const priority = (d: CriticalDefectItem): number => {
-    if (d.token === '#PA#') return 1;
-    if (d.pairId === 'SC-Confirmation') return 2;
-    if (d.defectType === 'Swapped / Misplaced' && d.summary.startsWith('Swapped')) return 3;
-    if (d.pairId === 'EP-Reminder') return 4;
-    if (d.summary.includes('Misplaced #PMSGA#')) return 5;
-    if (d.summary.includes('Misspelled')) return 6;
-    if (d.token === '#PFACiLITY#') return 7;
-    if (d.summary.includes('mid-sentence')) return 8;
-    if (d.summary.includes('Concatenated')) return 9;
-    if (d.summary.includes('Stray double quote')) return 10;
-    return 11;
-  };
-
-  return defects.sort((a, b) => priority(a) - priority(b));
+function buildCriticalDefects(allPairs: TemplatePairAnalysis[]): CriticalDefectItem[] {
+  return allPairs.flatMap((pair) => pair.issues.filter((issue) => issue.severity === 'critical').map((issue) => ({
+    id: issue.id,
+    pairId: pair.pairId, mode: pair.mode, smsType: pair.smsType, language: issue.language,
+    defectType: issue.category === 'content_difference' ? 'Content difference' as const :
+      issue.category === 'formatting' ? 'Formatting' as const :
+      issue.category === 'swapped_missing' ? (issue.token ? 'Swapped / Misplaced' as const : 'Truncated / Missing' as const) :
+      issue.category === 'schema_drift' ? 'Schema Drift' as const : 'Typo / Broken' as const,
+    token: issue.token ?? null, fieldId: issue.fieldId ?? null,
+    summary: issue.title, impact: issue.explanation, evidence: issue.evidence,
+  })));
 }
 
-/**
- * Builds the Global Token Fragmentation Matrix grouped by semantic field,
- * dynamically counting every occurrence across all 78 templates.
- */
 function buildTokenMatrix(
   allTemplates: ParsedTemplate[],
   allPairs: TemplatePairAnalysis[]
@@ -1249,11 +1172,20 @@ function buildTokenMatrix(
   }
 
   for (const tpl of allTemplates) {
+    const occurrencesBySpelling = new Map<string, number>();
     for (const tok of tpl.tokens) {
       const fieldId = getTokenField(tok);
       const tokenMap = byField.get(fieldId)!;
       if (!tokenMap.has(tok)) tokenMap.set(tok, []);
+      const occurrenceIndex = occurrencesBySpelling.get(tok) ?? 0;
+      occurrencesBySpelling.set(tok, occurrenceIndex + 1);
+      const pair = pairLookup.get(tpl.pairId);
+      const info = (tpl.language === 'English' ? pair?.enTokenMap : pair?.arTokenMap)?.[tok];
       tokenMap.get(tok)!.push({
+        occurrenceIndex,
+        severity: info?.severity ?? 'consistent',
+        issueIds: pair?.issues.filter((issue) => (issue.language === tpl.language || issue.language === 'Both') &&
+          (issue.token === tok || issue.relatedTokens?.includes(tok) || (!issue.token && !issue.relatedTokens && info && issue.fieldId === info.fieldId))).map((issue) => issue.id),
         pairId: tpl.pairId,
         mode: tpl.mode,
         smsType: tpl.smsType,
@@ -1284,16 +1216,6 @@ function buildTokenMatrix(
       if (typoCheck.isTypo) {
         worstSeverity = 'critical';
         hasTypos = true;
-      }
-
-      for (const occ of occurrences) {
-        const pair = pairLookup.get(occ.pairId);
-        if (!pair) continue;
-        const map = occ.language === 'English' ? pair.enTokenMap : pair.arTokenMap;
-        const tokInfo = map[token];
-        if (tokInfo) {
-          worstSeverity = maxSeverity(worstSeverity, tokInfo.severity);
-        }
       }
 
       let note = '';
@@ -1395,6 +1317,8 @@ export function analyzeTemplatesMarkdown(markdown: string): FullAuditReport {
     en_ar_mismatch: 0,
     casing_drift: 0,
     schema_drift: 0,
+    content_difference: 0,
+    formatting: 0,
   };
 
   const pairsByCategory: Record<IssueCategory, number> = {
@@ -1403,20 +1327,16 @@ export function analyzeTemplatesMarkdown(markdown: string): FullAuditReport {
     en_ar_mismatch: 0,
     casing_drift: 0,
     schema_drift: 0,
+    content_difference: 0,
+    formatting: 0,
   };
 
   for (const pair of allPairs) {
     for (const cat of pair.categories) {
       pairsByCategory[cat]++;
     }
-    for (const row of pair.fieldRows) {
-      for (const cat of row.categories) {
-        countsByCategory[cat]++;
-      }
-    }
-    if (pair.isMissingPair) {
-      countsByCategory.swapped_missing++;
-    }
+    for (const issue of pair.issues) countsByCategory[issue.category]++;
+
   }
 
   const uniqueTokenVariants = tokenMatrix.reduce(
@@ -1442,6 +1362,10 @@ export function analyzeTemplatesMarkdown(markdown: string): FullAuditReport {
     countsByCategory,
     pairsByCategory,
     criticalDefectCount: criticalDefects.length,
+    criticalPairCount: allPairs.filter((pair) => pair.hasCriticalDefect).length,
+    criticalMessageCount: allPairs.reduce((count, pair) => count +
+      ([pair.en, pair.ar].filter((tpl) => tpl && pair.issues.some((issue) => issue.severity === 'critical' &&
+        (issue.language === tpl.language || issue.language === 'Both'))).length), 0),
   };
 
   return {

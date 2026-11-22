@@ -6,9 +6,11 @@ import type {
   TokenVisualSeverity,
 } from '../types/sms';
 import { tokenizeTemplateBody } from '../utils/templateParser';
+import { sourceMessageAnchor, sourceTokenAnchor } from '../utils/sourceNavigation';
 
 interface VerbatimTemplateBodyProps {
   body: string;
+  sourceTemplateKey?: string;
   language: TemplateLanguage;
   tokenMap: Record<string, TokenOccurrenceIssue>;
   selectedFieldId: SemanticFieldId | null;
@@ -27,6 +29,7 @@ const SEVERITY_CLASS: Record<TokenVisualSeverity, string> = {
 
 export function VerbatimTemplateBody({
   body,
+  sourceTemplateKey,
   language,
   tokenMap,
   selectedFieldId,
@@ -39,9 +42,11 @@ export function VerbatimTemplateBody({
 
   return (
     <div
+      id={sourceTemplateKey ? sourceMessageAnchor(sourceTemplateKey) : undefined}
+      tabIndex={sourceTemplateKey ? -1 : undefined}
       dir={isArabic ? 'rtl' : 'ltr'}
       lang={isArabic ? 'ar' : 'en'}
-      className={`text-[14.5px] leading-[1.85] text-slate-800 whitespace-pre-wrap break-words ${
+      className={`scroll-mt-28 text-[14.5px] leading-[1.85] text-slate-800 whitespace-pre-wrap break-words ${
         isArabic ? 'font-arabic text-right' : 'text-left'
       }`}
     >
@@ -73,6 +78,7 @@ export function VerbatimTemplateBody({
         return (
           <button
             key={seg.index}
+            id={sourceTemplateKey ? sourceTokenAnchor(sourceTemplateKey, seg.index) : undefined}
             type="button"
             dir="ltr"
             onClick={() => {
@@ -86,7 +92,7 @@ export function VerbatimTemplateBody({
                 ? `${info.fieldLabel}: ${info.explanation} (Click to inspect)`
                 : seg.value
             }
-            className={`sms-token ${severityClass} ${activeClass}`}
+            className={`sms-token scroll-mt-28 ${severityClass} ${activeClass}`}
           >
             {seg.value}
           </button>

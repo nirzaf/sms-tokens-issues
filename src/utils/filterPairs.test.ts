@@ -24,7 +24,7 @@ test('filterPairs filters by mode, smsType, category, exactToken, search, and in
   const onlyInconsistent = report.allPairs.filter((p) =>
     pairMatchesFilters(p, { ...DEFAULT_FILTERS, onlyInconsistent: true })
   );
-  assert.equal(onlyInconsistent.length, 38);
+  assert.equal(onlyInconsistent.length, 39);
 
   const exactNmae = report.allPairs.filter((p) =>
     pairMatchesFilters(p, { ...DEFAULT_FILTERS, exactTokenFilter: '#PFACILITYNMAE#' })

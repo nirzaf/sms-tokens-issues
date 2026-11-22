@@ -1,10 +1,10 @@
 import { ArrowUpRight, Filter, X } from 'lucide-react';
 import type {
   SemanticFieldId,
-  TemplateLanguage,
   TokenMatrixFieldGroup,
   TokenVisualSeverity,
 } from '../types/sms';
+import { evidenceAnchor, type JumpToSource } from '../utils/sourceNavigation';
 
 interface GlobalTokenMatrixProps {
   groups: TokenMatrixFieldGroup[];
@@ -15,12 +15,7 @@ interface GlobalTokenMatrixProps {
   onSelectMatrixToken: (
     selection: { fieldId: SemanticFieldId; token: string } | null
   ) => void;
-  onJumpToSource: (
-    pairId: string,
-    token: string,
-    language: TemplateLanguage,
-    originLabel: string
-  ) => void;
+  onJumpToSource: JumpToSource;
   onFilterByExactToken: (token: string) => void;
 }
 
@@ -179,16 +174,23 @@ export function GlobalTokenMatrix({
                       </div>
 
                       <div className="flex flex-wrap gap-1.5 pt-1">
-                        {activeVariant.occurrences.map((occ, idx) => (
+                        {activeVariant.occurrences.map((occ, idx) => {
+                          const anchor = evidenceAnchor('matrix-occurrence', group.fieldId,
+                            activeVariant.token, occ.pairId, occ.language, occ.occurrenceIndex ?? idx);
+                          return (
                           <button
-                            key={`${occ.pairId}-${occ.language}-${idx}`}
+                            key={anchor}
+                            id={anchor}
+                            aria-label={`View ${occ.language} ${occ.pairId} occurrence ${(occ.occurrenceIndex ?? 0) + 1} of ${occ.token}`}
                             type="button"
                             onClick={() =>
                               onJumpToSource(
                                 occ.pairId,
                                 occ.token,
                                 occ.language,
-                                `Token Matrix (${activeVariant.token})`
+                                `Token Matrix (${activeVariant.token})`,
+                                anchor,
+                                occ.occurrenceIndex
                               )
                             }
                             className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-white border border-slate-200 hover:border-slate-900 hover:text-slate-950 text-slate-700 rounded transition-colors cursor-pointer whitespace-nowrap"
@@ -201,12 +203,16 @@ export function GlobalTokenMatrix({
                             <span className="text-slate-500">
                               ({occ.language === 'English' ? 'EN' : 'AR'})
                             </span>
+                            {occ.severity && occ.severity !== 'consistent' && (
+                              <span className="text-slate-600">{occ.severity}</span>
+                            )}
                             <ArrowUpRight
                               className="w-3 h-3 text-slate-400"
                               aria-hidden="true"
                             />
                           </button>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}

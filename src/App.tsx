@@ -22,6 +22,24 @@ import {
   type PairFilterState,
 } from './utils/filterPairs';
 import { MODE_ORDER } from './utils/templateParser';
+import { resolveSourceAnchors, type JumpToSource } from './utils/sourceNavigation';
+
+type PairSelections = Record<string, {
+  fieldId: SemanticFieldId | null;
+  token: string | null;
+  language: TemplateLanguage | null;
+}>;
+type MatrixSelection = { fieldId: SemanticFieldId; token: string } | null;
+type ViewSnapshot = {
+  label: string;
+  anchorId: string | null;
+  scrollY: number;
+  filters: PairFilterState;
+  expandedModes: Record<ConsultationModeCode, boolean>;
+  pairSelections: PairSelections;
+  selectedMatrixToken: MatrixSelection;
+};
+type ScrollRequest = { anchorIds: string[]; fallbackY?: number; focus: boolean };
 
 const DATASET_PATH = '/assets/aistudio/DATAVERSE_SMS_TEMPLATES_20261119_615c15d2.md';
 
@@ -48,32 +66,20 @@ export default function App() {
   const [flashedPairId, setFlashedPairId] = useState<string | null>(null);
   const flashTimerRef = useRef<number | null>(null);
 
-  const [pairSelections, setPairSelections] = useState<
-    Record<
-      string,
-      {
-        fieldId: SemanticFieldId | null;
-        token: string | null;
-        language: TemplateLanguage | null;
-      }
-    >
-  >({});
-
-  const [selectedMatrixToken, setSelectedMatrixToken] = useState<{
-    fieldId: SemanticFieldId;
-    token: string;
-  } | null>(null);
-
-  const [returnPoint, setReturnPoint] = useState<{
-    scrollY: number;
-    label: string;
-  } | null>(null);
+  const [pairSelections, setPairSelections] = useState<PairSelections>({});
+  const [selectedMatrixToken, setSelectedMatrixToken] = useState<MatrixSelection>(null);
+  const [returnPoints, setReturnPoints] = useState<ViewSnapshot[]>([]);
+  const returnPoint = returnPoints.at(-1) ?? null;
+  const [scrollRequest, setScrollRequest] = useState<ScrollRequest | null>(null);
   const [showBackToSummary, setShowBackToSummary] = useState(false);
 
   const loadDataset = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      if (!DATASET_PATH) {
+        throw new Error('No internal dataset is packaged in this build. Open the approved private report.');
+      }
       const res = await fetch(DATASET_PATH);
       if (!res.ok) {
         throw new Error(`Failed to load templates (${res.status} ${res.statusText})`);
@@ -98,9 +104,6 @@ export default function App() {
     const onScroll = () => {
       const y = window.scrollY;
       setShowBackToSummary(y > 380);
-      if (y < 80) {
-        setReturnPoint(null);
-      }
     };
     window.addEventListener('scroll', onScroll, { passive: true });
     onScroll();
@@ -126,16 +129,36 @@ export default function App() {
     }, 1800);
   }, []);
 
-  const scrollToElementId = useCallback((elementId: string) => {
-    window.requestAnimationFrame(() => {
-      window.setTimeout(() => {
-        const el = document.getElementById(elementId);
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-      }, 40);
-    });
+  const scrollToElementId = useCallback((id: string) => {
+    setScrollRequest({ anchorIds: [id], focus: false });
   }, []);
+
+  useEffect(() => {
+    if (!scrollRequest) return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = scrollRequest.anchorIds
+        .map((id) => document.getElementById(id))
+        .find((element) => element !== null);
+      const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 'instant' : 'smooth';
+      if (target) {
+        if (scrollRequest.focus) target.focus({ preventScroll: true });
+        target.scrollIntoView({ behavior, block: 'start' });
+      } else if (scrollRequest.fallbackY !== undefined) {
+        window.scrollTo({ top: scrollRequest.fallbackY, behavior });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [scrollRequest]);
+
+  const rememberView = useCallback((label: string, anchorId?: string) => {
+    const activeId = document.activeElement instanceof HTMLElement
+      ? document.activeElement.id : '';
+    setReturnPoints((points) => [...points, {
+      label, anchorId: anchorId ?? (activeId || null), scrollY: window.scrollY,
+      filters, expandedModes, pairSelections, selectedMatrixToken,
+    }]);
+  }, [filters, expandedModes, pairSelections, selectedMatrixToken]);
 
   const hasActiveFilters = useMemo(() => hasAnyActiveFilter(filters), [filters]);
 
@@ -190,7 +213,7 @@ export default function App() {
   const handleJumpToMode = useCallback(
     (mode: ConsultationModeCode) => {
       if (!report) return;
-      setReturnPoint({ scrollY: window.scrollY, label: 'Previous View' });
+      rememberView('Previous View');
 
       // Ensure zero dead links: if current filters hide all pairs of this mode, clear conflicting filters
       const targetMode = report.modes.find((m) => m.code === mode);
@@ -207,12 +230,12 @@ export default function App() {
       setExpandedModes((prev) => ({ ...prev, [mode]: true }));
       scrollToElementId(`mode-${mode}`);
     },
-    [report, filters, scrollToElementId]
+    [report, filters, rememberView, scrollToElementId]
   );
 
   const handleFilterByCategoryFromSummary = useCallback(
     (category: IssueCategory | 'ALL') => {
-      setReturnPoint({ scrollY: window.scrollY, label: 'Executive Summary' });
+      rememberView('Executive Summary');
       setFilters((prev) => ({
         ...DEFAULT_FILTERS,
         categoryFilter: prev.categoryFilter === category && category !== 'ALL' ? 'ALL' : category,
@@ -220,21 +243,16 @@ export default function App() {
       setExpandedModes(buildExpandedState(true));
       scrollToElementId('comparisons');
     },
-    [scrollToElementId]
+    [rememberView, scrollToElementId]
   );
 
-  const handleJumpToSource = useCallback(
-    (
-      pairId: string,
-      token: string | null,
-      language: TemplateLanguage | 'Both',
-      originLabel: string
-    ) => {
+  const handleJumpToSource = useCallback<JumpToSource>(
+    (pairId, token, language, originLabel, originId, occurrenceIndex) => {
       if (!report) return;
       const targetPair = report.allPairs.find((p) => p.pairId === pairId);
       if (!targetPair) return;
 
-      setReturnPoint({ scrollY: window.scrollY, label: originLabel });
+      rememberView(originLabel, originId);
 
       // Automatically clear filters if target pair would be hidden
       if (!pairMatchesFilters(targetPair, filters)) {
@@ -264,10 +282,13 @@ export default function App() {
         }));
       }
 
-      scrollToElementId(`pair-${pairId}`);
+      setScrollRequest({
+        anchorIds: resolveSourceAnchors(targetPair, language, token, occurrenceIndex),
+        focus: true,
+      });
       triggerFlash(pairId);
     },
-    [report, filters, scrollToElementId, triggerFlash]
+    [report, filters, rememberView, triggerFlash]
   );
 
   const handleSelectTokenInPair = useCallback(
@@ -308,7 +329,7 @@ export default function App() {
 
   const handleFilterByExactToken = useCallback(
     (token: string) => {
-      setReturnPoint({ scrollY: window.scrollY, label: 'Previous View' });
+      rememberView('Previous View');
       setFilters({
         ...DEFAULT_FILTERS,
         exactTokenFilter: token,
@@ -316,22 +337,30 @@ export default function App() {
       setExpandedModes(buildExpandedState(true));
       scrollToElementId('comparisons');
     },
-    [scrollToElementId]
+    [rememberView, scrollToElementId]
   );
 
   const handleJumpToTokenMatrix = useCallback(
-    (fieldId: SemanticFieldId, token: string) => {
-      setReturnPoint({ scrollY: window.scrollY, label: 'Template Comparison' });
+    (fieldId: SemanticFieldId, token: string, originId?: string) => {
+      rememberView('Template Comparison', originId);
       setSelectedMatrixToken({ fieldId, token });
       scrollToElementId(`matrix-field-${fieldId}`);
     },
-    [scrollToElementId]
+    [rememberView, scrollToElementId]
   );
 
   const handleReturnPrevious = useCallback(() => {
     if (!returnPoint) return;
-    window.scrollTo({ top: returnPoint.scrollY, behavior: 'smooth' });
-    setReturnPoint(null);
+    setFilters(returnPoint.filters);
+    setExpandedModes(returnPoint.expandedModes);
+    setPairSelections(returnPoint.pairSelections);
+    setSelectedMatrixToken(returnPoint.selectedMatrixToken);
+    setReturnPoints((points) => points.slice(0, -1));
+    setScrollRequest({
+      anchorIds: returnPoint.anchorId ? [returnPoint.anchorId] : [],
+      fallbackY: returnPoint.scrollY,
+      focus: true,
+    });
   }, [returnPoint]);
 
   const handleBackToSummary = useCallback(() => {
@@ -478,6 +507,7 @@ export default function App() {
                   onClearSelection={handleClearPairSelection}
                   onFilterByExactToken={handleFilterByExactToken}
                   onJumpToTokenMatrix={handleJumpToTokenMatrix}
+                  onJumpToSource={handleJumpToSource}
                 />
               ))}
             </div>
@@ -488,9 +518,7 @@ export default function App() {
           groups={report.tokenMatrix}
           selectedMatrixToken={selectedMatrixToken}
           onSelectMatrixToken={setSelectedMatrixToken}
-          onJumpToSource={(pairId, token, lang, origin) =>
-            handleJumpToSource(pairId, token, lang, origin)
-          }
+          onJumpToSource={handleJumpToSource}
           onFilterByExactToken={handleFilterByExactToken}
         />
       </main>
@@ -514,7 +542,7 @@ export default function App() {
         returnPoint={returnPoint}
         showBackToSummary={showBackToSummary}
         onReturnPrevious={handleReturnPrevious}
-        onDismissReturn={() => setReturnPoint(null)}
+        onDismissReturn={() => setReturnPoints([])}
         onBackToSummary={handleBackToSummary}
       />
     </div>

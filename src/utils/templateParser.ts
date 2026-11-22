@@ -58,16 +58,16 @@ export const MODE_META: Record<
     description: 'Phone consultation appointments for Bowel Cancer Screening',
   },
   CV: {
-    name: 'COVID-19 / Specialty Clinic',
-    description: 'Scheduled clinic visits using Patient ID and 40277077 helpline',
+    name: 'CV templates',
+    description: 'Messages describe clinic visits and include a patient ID and contact helpline',
   },
   BL: {
     name: 'Blindness Survey',
     description: 'National Assessment of Blindness Survey ophthalmology appointments',
   },
   SC: {
-    name: 'Specialist / Screening Clinic',
-    description: 'Health center clinic templates closely derived from RO schema',
+    name: 'SC templates',
+    description: 'Messages describe health center appointments; the official mode label is not in the snapshot',
   },
 };
 
@@ -142,7 +142,7 @@ export function tokenizeTemplateBody(body: string): BodySegment[] {
 /**
  * Parses the Dataverse SMS Templates markdown file strictly verbatim.
  * Discards technical metadata (Template ID, Created, Modified, Status, raw numeric codes)
- * and retains only clean human-readable labels + exact template body text.
+ * and retains the labels, a heading line location, and exact template body text.
  */
 export function parseTemplatesMarkdown(markdown: string): {
   snapshotDate: string;
@@ -185,6 +185,7 @@ export function parseTemplatesMarkdown(markdown: string): {
       smsType,
       language,
       heading: `${mode}-${smsType} SMS-${language}`,
+      sourceLine: normalized.slice(0, match.index).split('\n').length,
       body: verbatimBody,
       tokens: extractTokens(verbatimBody),
     });
