@@ -1,0 +1,6 @@
+{
+  "name": "Dataverse SMS Token & Template Audit",
+  "description": "Interactive side-by-side audit of 78 English and Arabic Dataverse SMS templates across 10 consultation modes, exposing token mismatches, casing drift, typos, swapped placeholders, and schema fragmentation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
